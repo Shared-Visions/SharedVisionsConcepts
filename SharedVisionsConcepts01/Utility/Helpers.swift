@@ -15,6 +15,19 @@ extension Date {
     }
 }
 
+/// Numbers (into `Headshot01`...`Headshot16` in Assets.xcassets) of the
+/// bundled stock headshots that depict adults. Headshots 2, 15, and 16 are
+/// children and are excluded so mock "community member" / "interviewee" data
+/// never surfaces a child's photo standing in for an adult role.
+let adultHeadshotNumbers: [Int] = [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+
+/// Maps an arbitrary index to one of the adult-only headshot asset names,
+/// cycling through `adultHeadshotNumbers` rather than through all 16 images.
+func adultHeadshotName(for index: Int) -> String {
+    let number = adultHeadshotNumbers[index % adultHeadshotNumbers.count]
+    return "Headshot\(String(format: "%02d", number))"
+}
+
 
 
 /// See WWDC 2025 Session: Meet SwiftUI spatial layout

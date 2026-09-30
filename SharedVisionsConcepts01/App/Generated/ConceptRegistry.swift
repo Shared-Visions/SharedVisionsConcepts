@@ -98,10 +98,60 @@ struct ConceptRegistry {
         type: .VOLUME,
         date: Date("2/25/2026"),
         isFeatured: true,
-        subtitle: "Selective Sphere Lighting",
+        subtitle: "Active Profile Orbs",
         description: "Three glass profile orbs with selective backlight control",
         success: true,
         makeView: { AnyView(Concept010()) }
+    ),
+    Concept(
+        title: "Concept 011",
+        type: .SPACE_FULL,
+        date: Date("9/23/2026"),
+        isFeatured: true,
+        subtitle: "Welcome / Living Constellation",
+        description: "A pitch-black 360° intro space where evenly spaced dots around the user breathe in and out, then compress into electric-blue points that briefly connect like a constellation or a neural net. Lightning-like blue connections build in small batches, then the Shared Visions title fades in. Begin returns to the main menu.",
+        success: true,
+        makeView: { AnyView(Concept011()) }
+    ),
+    Concept(
+        title: "Concept 012",
+        type: .SPACE,
+        date: Date("9/23/2026"),
+        isFeatured: true,
+        subtitle: "Interview Chooser Comp",
+        description: "A deliberately literal implementation of the creative-director comp: a field of portrait bubbles with small colored role dots surrounding a central video chooser. This concept is intentionally conservative and does not add the more experimental Interview Universe behavior.",
+        success: true,
+        makeView: { AnyView(Concept012()) }
+    ),
+    Concept(
+        title: "Concept 013",
+        type: .SPACE,
+        date: Date("9/24/2026"),
+        isFeatured: true,
+        subtitle: "Interview Universe",
+        description: "A dynamic interview universe. Every interview is a clean portrait bubble",
+        success: true,
+        makeView: { AnyView(Concept013()) }
+    ),
+    Concept(
+        title: "Concept 014",
+        type: .SPACE,
+        date: Date("9/24/2026"),
+        isFeatured: true,
+        subtitle: "Living Palm Infographic",
+        description: "Close then reopen your left hand to toggle a miniature Jeffrey",
+        success: true,
+        makeView: { AnyView(Concept014()) }
+    ),
+    Concept(
+        title: "Concept 015",
+        type: .SPACE,
+        date: Date("9/24/2026"),
+        isFeatured: true,
+        subtitle: "Interview Playback with Spatial Captions",
+        description: "Interview playback with an AVPlayer-backed spatial panel and head-relative captions. Before real footage is bundled, the panel runs a simple animated 1/2/3 stock visual synchronized to the three sample lines of dialogue, then loops, so timing and caption behavior are easy to review.",
+        success: true,
+        makeView: { AnyView(Concept015()) }
     )
     ]
 
