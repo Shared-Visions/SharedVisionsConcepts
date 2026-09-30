@@ -127,15 +127,23 @@ struct ConceptDetail: View {
             switch await openImmersiveSpace(id: "RouterSpace", value: concept.title) {
             case .opened:
                 conceptIsOpen = true
+                // Mixed-immersion spaces coexist with the main window (see
+                // `.immersiveEnvironmentBehavior(.coexist)` in the app scene),
+                // so leave it open — closing it here left users with no way
+                // back to the concept list once inside.
             case .error, .userCancelled:
                 fallthrough
             @unknown default:
                 conceptIsOpen = false
                 showConceptContent = false
             }
-        } else if conceptIsOpen {
+        } else {
+            // Always ask the system to dismiss the mixed immersive space when
+            // the toggle is turned off. This avoids a stale local-state flag
+            // leaving Concept 12 (or any other mixed-space concept) visible.
             await dismissImmersiveSpace()
             conceptIsOpen = false
+            showConceptContent = false
         }
     }
 
@@ -144,6 +152,11 @@ struct ConceptDetail: View {
             switch await openImmersiveSpace(id: "RouterSpaceFull", value: concept.title) {
             case .opened:
                 conceptIsOpen = true
+                // Full-immersion spaces replace the surroundings entirely and
+                // the main window would float uselessly in front of them, so
+                // hide it — the concept itself is responsible for providing
+                // its own way back out (see Concept011's exit button).
+                dismissWindow(id: "MainWindow")
             case .error, .userCancelled:
                 fallthrough
             @unknown default:
@@ -153,6 +166,7 @@ struct ConceptDetail: View {
         } else if conceptIsOpen {
             await dismissImmersiveSpace()
             conceptIsOpen = false
+            openWindow(id: "MainWindow")
         }
     }
 

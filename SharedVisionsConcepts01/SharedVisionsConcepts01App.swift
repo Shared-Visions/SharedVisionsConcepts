@@ -16,7 +16,7 @@ struct SharedVisionsConcepts01App: App {
     var body: some Scene {
 
         // Main window
-        WindowGroup {
+        WindowGroup(id: "MainWindow") {
             Directory()
                 .environment(appModel)
                 .environment(modelData)
