@@ -97,20 +97,55 @@ fourth slider to `TuningPanel` is straightforward.
 ## Open items
 
 **Real app icons.** `AppTag.symbol` uses SF Symbols because there is no app-icon
-artwork in the asset catalogue. One line per case once the images exist.
+artwork in the asset catalogue. One line per case once the images exist. The
+bubbles are now large enough for an icon to read, which they were not on the
+first device pass.
 
 **Deprecation warning in `TuningSlider`.** Around line 1069, `Text(...) + Text(...)`
 warns under iOS 26: "Use string interpolation on `Text` instead". Pre-existing in
 the merged work, not introduced by items 6 or 7. One-line fix, left alone to keep
 this change set tight.
 
-**Headshot inset axis needs a device check.** The inset depends on which way
-`look(at:)` aims the orb's forward axis. Reasoned as +Z pushing the face away
-from the viewer; if the photo pops out in front of the water on device, flip one
-sign. Cannot be verified in the simulator.
+**Headshot inset axis — resolved on device.** The first device pass (3 Nov)
+confirms faces sit *inside* the water sphere, not popping out in front, so the
+`+Z` reasoning was right and no sign flip is needed.
 
-**Particle cue linking panel to faces.** Skipped deliberately — it was phrased as
-a maybe, and shared depth plus the glass treatment may already carry the linkage.
+**Particle cue linking panel to faces.** Still skipped — it was phrased as a
+maybe, and shared depth plus the glass treatment may already carry the linkage.
+
+**Interview Universe panel placement needs eyes-on.** It sits 0.45 m below eye
+level at dome depth and did not appear in either device capture, both of which
+were framed above it. Worth confirming it is where it should be.
+
+## First device pass — 3 Nov
+
+Two captures from the headset, in a bright room against a white wall.
+
+Confirmed working: persona cut-outs, faces inside the bubbles, 200° wrap, the
+dimmed fade-out (explicitly liked), the documentary title and 1.5× size, and the
+selection overlay with its name, role, "Appears in" chips and Watch interview
+button.
+
+Changed in response:
+
+- **`bubbleScale` default 1.0 → 1.4.** Bubbles read as too small to pick a face
+  out of across a room.
+- **`headshotScale` 0.6 → 0.78.** The face occupied under half the sphere.
+- **Neutral backing disc added behind each face.** The accent tint alone washed
+  out against a white wall, which is why active faces were still hard to see.
+  A dark disc now sits behind the head to separate it from the room.
+- **Grayscale dropped from faces that pass the filter.** Filter state is carried
+  entirely by `OpacityComponent` now, so desaturating matching faces only cost
+  legibility.
+- **App bubble cluster scale 0.5 → 0.85, icons enlarged.** On device these
+  rendered as small coloured dots with an illegible symbol — precisely what the
+  workshop asked to move away from.
+- **Documentary subtitle given explicit white.** `.secondary` renders
+  near-invisible over the black video panel.
+
+Not a bug: a small green dot appears at the *same screen position* in both
+captures despite the camera having moved between them. Being screen-locked
+rather than world-locked, it is a visionOS capture indicator, not scene content.
 
 ## FPO headshots — review was interrupted
 

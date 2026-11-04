@@ -154,7 +154,9 @@ fileprivate struct DesignTuning {
     var videoScale: Double = 1.5
 
     /// Uniform multiplier on each person orb, face and app bubbles included.
-    var bubbleScale: Double = 1.0
+    /// Defaults above 1 after the first device pass — at 1.0 the bubbles read
+    /// as too small to pick a face out of across a room.
+    var bubbleScale: Double = 1.4
 
     /// Total horizontal arc, in degrees, that the dome of faces spans.
     /// Defaults wide so the community reads as surrounding the video rather
@@ -204,9 +206,10 @@ struct Concept012: View {
     private static let headshotInset: Float = 0.014
 
     /// Headshot size on top of the `AttachmentAnchor`'s own 1.7 scale in the
-    /// `PersonOrb` asset, shrunk so the face reads as suspended inside the
-    /// bubble rather than skinned onto it.
-    private static let headshotScale: Float = 0.6
+    /// `PersonOrb` asset. Raised after the first device pass: at 0.6 the face
+    /// occupied under half the sphere and was hard to make out across the
+    /// room, even at full opacity.
+    private static let headshotScale: Float = 0.78
 
     /// How far filtered-out people fade. The workshop comp shows them clearly
     /// still present but washed back, so this keeps the silhouette readable
@@ -433,8 +436,12 @@ struct Concept012: View {
             // Billboarded so the app bubbles stay flat circles facing the
             // viewer rather than turning into ellipses off to the sides.
             cluster.components.set(BillboardComponent())
-            cluster.position = SIMD3<Float>(0, -0.058, 0)
-            cluster.scale = SIMD3<Float>(repeating: 0.5)
+            // Scale raised after the first device pass. At 0.5 these rendered
+            // as small coloured dots — which is precisely what the workshop
+            // asked to move away from — and the symbol inside was illegible.
+            // Dropped slightly further below the sphere to match.
+            cluster.position = SIMD3<Float>(0, -0.068, 0)
+            cluster.scale = SIMD3<Float>(repeating: 0.85)
             orb.addChild(cluster)
         }
 
@@ -781,10 +788,19 @@ fileprivate struct PersonaPortrait: View {
 
     var body: some View {
         ZStack {
-            // Stands in for light scattering through the water behind the
-            // head, and gives the cut-out something to cast depth against.
+            // Neutral backing first. The accent tint alone washes out against
+            // a bright room — on device the faces read as barely-there against
+            // a white wall — so a dark disc sits directly behind the head to
+            // give the cut-out something to separate from.
             Circle()
-                .fill(Color(person.accentColor).opacity(isSelected ? 0.5 : 0.24))
+                .fill(.black.opacity(isSelected ? 0.45 : 0.32))
+                .blur(radius: diameter * 0.1)
+                .frame(width: diameter * 0.9, height: diameter * 0.9)
+
+            // Stands in for light scattering through the water behind the
+            // head, and reads as a rim glow around the darker backing.
+            Circle()
+                .fill(Color(person.accentColor).opacity(isSelected ? 0.55 : 0.34))
                 .blur(radius: diameter * 0.17)
                 .frame(width: diameter, height: diameter)
 
@@ -808,8 +824,10 @@ fileprivate struct PersonaPortrait: View {
                     .offset(z: diameter * 0.08)
             }
         }
-        .grayscale(isSelected ? 0.0 : 0.2)
-        .saturation(isSelected ? 1.2 : 0.9)
+        // No grayscale on faces that pass the filter. Filter state is carried
+        // entirely by `OpacityComponent` on the orb now, so desaturating here
+        // only cost legibility.
+        .saturation(isSelected ? 1.2 : 1)
         .animation(.easeInOut(duration: 0.25), value: isSelected)
     }
 }
@@ -842,12 +860,12 @@ fileprivate struct AppBubbleCluster: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
             ForEach(apps) { app in
                 Image(systemName: app.symbol)
-                    .font(.system(size: isEmphasized ? 22 : 15, weight: .semibold))
+                    .font(.system(size: isEmphasized ? 26 : 19, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: isEmphasized ? 46 : 32, height: isEmphasized ? 46 : 32)
+                    .frame(width: isEmphasized ? 52 : 38, height: isEmphasized ? 52 : 38)
                     .background(app.tint.opacity(0.92), in: Circle())
                     .accessibilityLabel(app.label)
             }
@@ -885,13 +903,18 @@ fileprivate struct DocumentaryPanel: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Watch the Shared Visions Documentary")
                     .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
                 if let person {
                     Text("\(person.name) · \(person.role.rawValue)")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        // Explicit white rather than `.secondary`, which
+                        // renders near-invisible over the black video panel.
+                        .foregroundStyle(.white.opacity(0.82))
                 }
             }
-            .padding(20)
+            // Extra trailing room so a long name never runs under the close
+            // button in the opposite corner.
+            .padding(.init(top: 22, leading: 24, bottom: 20, trailing: 64))
 
             Image(systemName: "play.circle.fill")
                 .font(.system(size: min(width, height) * 0.22))
