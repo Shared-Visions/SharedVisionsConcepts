@@ -16,10 +16,17 @@ extension Date {
 }
 
 /// Numbers (into `Headshot01`...`Headshot16` in Assets.xcassets) of the
-/// bundled stock headshots that depict adults. Headshots 2, 15, and 16 are
-/// children and are excluded so mock "community member" / "interviewee" data
-/// never surfaces a child's photo standing in for an adult role.
-let adultHeadshotNumbers: [Int] = [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+/// bundled stock headshots that depict adults, so mock "community member" /
+/// "interviewee" data never surfaces a child's photo standing in for an
+/// adult role.
+///
+/// Verified image by image on 11/3/26. Re-verify whenever the headshot assets
+/// change — the asset names carry no age information.
+///
+/// Excluded: 2, 15, 16 (young children), and 9 (reads as roughly 15 to 18;
+/// excluded deliberately, since a minor standing in for a working
+/// professional is the same problem as a younger child doing it).
+let adultHeadshotNumbers: [Int] = [1, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14]
 
 /// Maps an arbitrary index to one of the adult-only headshot asset names,
 /// cycling through `adultHeadshotNumbers` rather than through all 16 images.

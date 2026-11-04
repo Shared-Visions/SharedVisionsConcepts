@@ -118,8 +118,8 @@ struct ConceptRegistry {
         type: .SPACE,
         date: Date("9/23/2026"),
         isFeatured: true,
-        subtitle: "Interview Chooser Comp",
-        description: "A deliberately literal implementation of the creative-director comp: a field of portrait bubbles with small colored role dots surrounding a central video chooser. This concept is intentionally conservative and does not add the more experimental Interview Universe behavior.",
+        subtitle: "Interview Chooser Dome",
+        description: "Reinterprets the \"choose interview\" comp for visionOS, revised against the design team's 21 Oct workshop screenshots. A persistent documentary window carries its own title frame and sits nearer the viewer than everything else, with person orbs — a persona portrait suspended inside a small sphere of water — floating all around it on a wide dome rather than a flat grid. Each face is lifted out of its photographic background with Vision's foreground-instance mask and layered in depth inside the sphere, so it reads as a spatial persona rather than a flat snapshot. Each person carries a cluster of flat app-icon bubbles instead of colour dots. Role filtering and the Community/Applications switch moved off the video window into a floating \"Interview Universe\" panel at the same depth as the faces, selecting a person opens a detail overlay in the same visual language, and three live sliders (video size, bubble size, field of view) let the proportions be tuned in-headset. Pinching an orb sends a traveling ripple across its water surface from the point you touched.",
         success: true,
         makeView: { AnyView(Concept012()) }
     ),
