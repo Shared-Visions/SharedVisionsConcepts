@@ -2,9 +2,9 @@
 //
 //  Title: Concept012
 //
-//  Subtitle: Interview Chooser Comp
+//  Subtitle: Interview Chooser Dome
 //
-//  Description: A deliberately literal implementation of the creative-director comp: a field of portrait bubbles with small colored role dots surrounding a central video chooser. This concept is intentionally conservative and does not add the more experimental Interview Universe behavior.
+//  Description: Reinterprets the "choose interview" comp for visionOS, revised against the design team's 21 Oct workshop screenshots. A persistent documentary window carries its own title frame and sits nearer the viewer than everything else, with person orbs — a persona portrait suspended inside a small sphere of water — floating all around it on a wide dome rather than a flat grid. Each face is lifted out of its photographic background with Vision's foreground-instance mask and layered in depth inside the sphere, so it reads as a spatial persona rather than a flat snapshot. Each person carries a cluster of flat app-icon bubbles instead of colour dots. Role filtering and the Community/Applications switch moved off the video window into a floating "Interview Universe" panel at the same depth as the faces, selecting a person opens a detail overlay in the same visual language, and three live sliders (video size, bubble size, field of view) let the proportions be tuned in-headset. Pinching an orb sends a traveling ripple across its water surface from the point you touched.
 //
 //  Type: Space
 //
@@ -14,318 +14,345 @@
 
 import SwiftUI
 import RealityKit
-import UIKit
+import RealityKitContent
+import Vision
+import CoreImage
 
-fileprivate enum Concept12Role: String, CaseIterable, Identifiable {
+// MARK: - Mock Data
+
+fileprivate enum Role: String, CaseIterable, Identifiable {
     case developer = "Developer"
     case designer = "Designer"
     case artist = "Artist"
     case videographer = "Videographer"
 
     var id: String { rawValue }
+}
 
-    var color: UIColor {
+fileprivate enum ChooserMode: String, CaseIterable, Identifiable {
+    case community = "Community"
+    case applications = "Applications"
+
+    var id: String { rawValue }
+}
+
+/// The "apps this person works in" bubbles clustered under each headshot.
+///
+/// The workshop note was to replace the flat colour dots in the comp with
+/// actual app icons. No app-icon artwork exists in the asset catalogue yet,
+/// so these use SF Symbols as stand-ins and keep a per-app tint as the
+/// bubble fill; swapping in real icons later only means changing `symbol`
+/// to an `Image(_:)` asset lookup.
+fileprivate enum AppTag: String, CaseIterable, Identifiable {
+    case design
+    case code
+    case video
+    case photo
+    case audio
+    case model
+
+    var id: String { rawValue }
+
+    var symbol: String {
         switch self {
-        case .developer:
-            return UIColor(red: 0.17, green: 0.62, blue: 0.90, alpha: 1.0)
-        case .designer:
-            return UIColor(red: 0.64, green: 0.22, blue: 0.74, alpha: 1.0)
-        case .artist:
-            return UIColor(red: 0.23, green: 0.73, blue: 0.35, alpha: 1.0)
-        case .videographer:
-            return UIColor(red: 0.84, green: 0.70, blue: 0.22, alpha: 1.0)
+        case .design: return "pencil.and.ruler"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .video: return "video"
+        case .photo: return "camera"
+        case .audio: return "waveform"
+        case .model: return "cube"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .design: return "Design tools"
+        case .code: return "Development tools"
+        case .video: return "Video editing"
+        case .photo: return "Photography"
+        case .audio: return "Audio production"
+        case .model: return "3D modeling"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .design: return .purple
+        case .code: return .blue
+        case .video: return .pink
+        case .photo: return .teal
+        case .audio: return .orange
+        case .model: return .green
         }
     }
 }
 
-fileprivate enum Concept12Mode: String, CaseIterable, Identifiable {
-    case community = "Community"
-    case applications = "Applications"
-    var id: String { rawValue }
-}
-
-fileprivate struct Concept12Person: Identifiable {
+fileprivate struct Person: Identifiable {
     let id: Int
     let name: String
-    let role: Concept12Role
-    let portraitAssetName: String
-    let tagColors: [UIColor]
+    let role: Role
+    let headshot: String
+    let accentColor: UIColor
+    let apps: [AppTag]
 }
 
-fileprivate let concept12People: [Concept12Person] = {
+/// Forty mock community members. The count is deliberate: at the 200° field
+/// of view the design comps imply, twenty orbs read as a sparse scattering
+/// rather than a community surrounding the viewer. Only twelve adult
+/// headshots are bundled, so faces repeat a little over three times across
+/// the dome — the comps repeat faces too, so this matches rather than fights
+/// them, but it is the reason to treat the roster as placeholder.
+fileprivate let mockPeople: [Person] = {
     let names = [
-        "Avery Chen", "Jordan Blake", "Riley Nakamura", "Sam Okafor", "Morgan Reyes", "Casey Whitfield",
-        "Drew Sinclair", "Rowan Patel", "Elliot Marsh", "Harper Voss", "Quinn Alvarez", "Skyler Duarte",
-        "Reese Hallberg", "Finley Okonjo", "Parker Iida", "Sasha Renner", "Tatum Osei", "Marlowe Petrov",
-        "Wren Kowalski", "Emerson Kade", "Remy Flores", "Dakota Price", "Alex Mercer", "Taylor Boone",
-        "Jules Han", "Cameron Shah", "Blake Mercer", "Micah Stone", "Noa Kim", "Robin Vega",
-        "Ari Santos", "Shawn Brooks", "Kai Mullins", "Jamie Frost", "Devin Hsu", "Peyton Cole"
+        "Avery Chen", "Jordan Blake", "Riley Nakamura", "Sam Okafor",
+        "Morgan Reyes", "Casey Whitfield", "Drew Sinclair", "Rowan Patel",
+        "Elliot Marsh", "Harper Voss", "Quinn Alvarez", "Skyler Duarte",
+        "Reese Hallberg", "Finley Okonjo", "Parker Iida", "Sasha Renner",
+        "Tatum Osei", "Marlowe Petrov", "Wren Kowalski", "Emerson Kade",
+        "Noa Lindqvist", "Dashiell Moreau", "Imani Carrington", "Teodoro Vasquez",
+        "Saoirse Behan", "Kenji Arakawa", "Priya Raghunathan", "Lucia Ferraro",
+        "Obi Nwachukwu", "Greta Halvorsen", "Mateo Bustamante", "Anouk Visser",
+        "Rafiq Haddad", "Sunniva Dahl", "Camille Beauchene", "Yusuf Demirci",
+        "Thandiwe Mokoena", "Linnea Soren", "Arjun Kapadia", "Beatrix Nagy"
     ]
 
-    let neutralTags: [UIColor] = [
-        UIColor(red: 0.77, green: 0.20, blue: 0.22, alpha: 1.0),
-        UIColor(white: 0.86, alpha: 1.0),
-        UIColor(white: 0.20, alpha: 1.0)
-    ]
+    let accentColors: [UIColor] = [.systemBlue, .systemGreen, .systemPurple, .systemOrange, .systemPink, .systemTeal, .systemYellow]
+    let appPool = AppTag.allCases
 
     return names.enumerated().map { index, name in
-        let role = Concept12Role.allCases[index % Concept12Role.allCases.count]
-        var tags = [role.color]
-        if index % 2 == 0 {
-            tags.append(neutralTags[index % neutralTags.count])
-        }
-        if index % 5 == 0 {
-            tags.append(Concept12Role.allCases[(index + 1) % Concept12Role.allCases.count].color)
+        // One to three apps per person, picked deterministically so the dome
+        // looks the same on every launch and screenshots stay comparable
+        // across review rounds.
+        let appCount = 1 + (index % 3)
+        let apps = (0..<appCount).map { offset in
+            appPool[(index * 2 + offset) % appPool.count]
         }
 
-        return Concept12Person(
+        return Person(
             id: index,
             name: name,
-            role: role,
-            portraitAssetName: String(format: "C12Portrait%02d", (index % 13) + 1),
-            tagColors: Array(tags.prefix(3))
+            role: Role.allCases[index % Role.allCases.count],
+            headshot: adultHeadshotName(for: index),
+            accentColor: accentColors[index % accentColors.count],
+            apps: apps
         )
     }
 }()
 
+// MARK: - Design Tuning
+
+/// Live knobs the design team asked for so proportions can be explored
+/// in-headset instead of in code. Exposed through `TuningPanel` in the
+/// scene's bottom ornament.
+fileprivate struct DesignTuning {
+
+    /// Video window size from the comp, before `videoScale` is applied.
+    static let baseVideoSize = CGSize(width: 480, height: 270)
+
+    /// Multiplier on the base video window size. Defaults to 1.5 to land the
+    /// "increase the video window by ~50%" note from the workshop.
+    var videoScale: Double = 1.5
+
+    /// Uniform multiplier on each person orb, face and app bubbles included.
+    /// Defaults above 1 after the first device pass — at 1.0 the bubbles read
+    /// as too small to pick a face out of across a room.
+    var bubbleScale: Double = 1.4
+
+    /// Total horizontal arc, in degrees, that the dome of faces spans.
+    /// Defaults wide so the community reads as surrounding the video rather
+    /// than sitting in a panel beside it.
+    var fieldOfViewDegrees: Double = 200
+
+    var videoWidth: CGFloat { DesignTuning.baseVideoSize.width * CGFloat(videoScale) }
+    var videoHeight: CGFloat { DesignTuning.baseVideoSize.height * CGFloat(videoScale) }
+}
+
+// MARK: - Concept012
+
 struct Concept012: View {
-    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
-    @Environment(\.dismissWindow) private var dismissWindow
-    @Environment(\.openWindow) private var openWindow
 
-    @State private var mode: Concept12Mode = .community
-    @State private var selectedRole: Concept12Role?
-    @State private var selectedPersonID: Int?
-    @State private var controller = Concept12CompController()
+    @State private var selectedRole: Role? = nil
+    @State private var mode: ChooserMode = .community
+    @State private var selectedPersonID: Int? = nil
+    @State private var isVideoVisible = true
+    @State private var isFilterPanelVisible = true
+    @State private var tuning = DesignTuning()
+    @State private var orbEntities: [Int: Entity] = [:]
+    @State private var waterController = WaterOrbController()
+    @State private var floatController = OrbFloatController()
+    @State private var portraitStore = PersonaPortraitStore()
 
-    private let centralPanelAttachmentID = "concept12-central-panel"
+    private let domeRadius: Float = 1.3
+
+    /// The video window sits well inside the dome of faces so it is the
+    /// nearest object in the scene. The workshop asked for it to be "closer
+    /// in the Z space to increase its prominence"; previously it shared a
+    /// depth with the people around it and read as one more panel.
+    private let videoDistance: Float = 0.85
+
+    /// How far the filter panel hangs below eye level. It is then pushed out
+    /// to `domeRadius` so it shares a depth with the faces.
+    private let filterPanelDrop: Float = 0.45
+
+    /// Where the selection overlay sits: yawed off to the right at the same
+    /// dome depth as the faces, clear of both the documentary window in the
+    /// centre and the filter panel below it.
+    private let selectionPanelYaw: Float = 34
+    private let selectionPanelDrop: Float = 0.16
+
+    /// How far, in meters, the headshot is pushed away from the viewer so a
+    /// rim of water sits in front of the face instead of the photo filling
+    /// the sphere's silhouette.
+    private static let headshotInset: Float = 0.014
+
+    /// Headshot size on top of the `AttachmentAnchor`'s own 1.7 scale in the
+    /// `PersonOrb` asset. Raised after the first device pass: at 0.6 the face
+    /// occupied under half the sphere and was hard to make out across the
+    /// room, even at full opacity.
+    private static let headshotScale: Float = 0.78
+
+    /// How far filtered-out people fade. The workshop comp shows them clearly
+    /// still present but washed back, so this keeps the silhouette readable
+    /// without competing with the people who match the filter. Worth tuning
+    /// on device — passthrough brightness changes how much 0.25 reads as.
+    private static let filteredOutOpacity: Float = 0.25
+
+    private var domeCenter: SIMD3<Float> {
+        SIMD3<Float>(0, DomeLayout.defaultEyeLevel, 0)
+    }
+
+    private var filterPanelPosition: SIMD3<Float> {
+        // Solve for the depth that puts the panel on the dome's surface at
+        // the given drop, so it is visually part of the field of people.
+        let depth = sqrt(max(domeRadius * domeRadius - filterPanelDrop * filterPanelDrop, 0.01))
+        return SIMD3<Float>(0, DomeLayout.defaultEyeLevel - filterPanelDrop, -depth)
+    }
+
+    /// Same dome-surface solve as the filter panel, then yawed to the right
+    /// so the profile opens beside the documentary rather than over it.
+    private var selectionPanelPosition: SIMD3<Float> {
+        let horizontalRadius = sqrt(max(domeRadius * domeRadius - selectionPanelDrop * selectionPanelDrop, 0.01))
+        let yaw = selectionPanelYaw * .pi / 180
+        return SIMD3<Float>(
+            sin(yaw) * horizontalRadius,
+            DomeLayout.defaultEyeLevel - selectionPanelDrop,
+            -cos(yaw) * horizontalRadius
+        )
+    }
+
+    private var filteredPeople: [Person] {
+        guard let selectedRole else { return mockPeople }
+        return mockPeople.filter { $0.role == selectedRole }
+    }
+
+    private var selectedPerson: Person? {
+        guard let selectedPersonID else { return nil }
+        return mockPeople.first { $0.id == selectedPersonID }
+    }
 
     var body: some View {
         RealityView { content, attachments in
-            await controller.build(people: concept12People, in: &content)
-            controller.installCentralPanel(
-                attachments.entity(for: centralPanelAttachmentID)
-            )
-            controller.applyFilter(selectedRole)
-            controller.setSelected(selectedPersonID)
-        } update: { _, attachments in
-            controller.installCentralPanel(
-                attachments.entity(for: centralPanelAttachmentID)
-            )
-            controller.applyFilter(selectedRole)
-            controller.setSelected(selectedPersonID)
+            buildDome(in: &content, attachments: attachments)
+            _ = content.subscribe(to: SceneEvents.Update.self) { event in
+                waterController.update(deltaTime: event.deltaTime)
+                floatController.update(deltaTime: event.deltaTime)
+            }
+        } update: { content, attachments in
+            updateDome(in: &content, attachments: attachments)
         } attachments: {
-            Attachment(id: centralPanelAttachmentID) {
-                Concept12CentralPanel(
-                    mode: $mode,
-                    selectedRole: $selectedRole,
-                    onClose: closeConcept
-                )
+            ForEach(mockPeople) { person in
+                Attachment(id: person.id) {
+                    PersonAttachment(
+                        person: person,
+                        portrait: portraitStore.portrait(for: person),
+                        isSelected: person.id == selectedPersonID
+                    )
+                }
+            }
+
+            ForEach(mockPeople) { person in
+                Attachment(id: AppBubbleCluster.attachmentID(for: person)) {
+                    AppBubbleCluster(apps: person.apps, isEmphasized: mode == .applications)
+                }
+            }
+
+            Attachment(id: "videoPanel") {
+                DocumentaryPanel(
+                    person: selectedPerson,
+                    width: tuning.videoWidth,
+                    height: tuning.videoHeight
+                ) {
+                    isVideoVisible = false
+                }
+            }
+
+            Attachment(id: "universePanel") {
+                InterviewUniversePanel(mode: $mode, selectedRole: $selectedRole) {
+                    isFilterPanelVisible = false
+                }
+            }
+
+            Attachment(id: "selectionPanel") {
+                // Built against the last selected person so the panel keeps
+                // its content through the dismiss transition instead of
+                // emptying out as it fades.
+                if let person = selectedPerson {
+                    PersonSelectionOverlay(
+                        person: person,
+                        portrait: portraitStore.portrait(for: person)
+                    ) {
+                        isVideoVisible = true
+                    } onClose: {
+                        selectedPersonID = nil
+                    }
+                }
             }
         }
         .gesture(
             SpatialTapGesture()
                 .targetedToAnyEntity()
                 .onEnded { value in
-                    guard let personID = controller.personID(for: value.entity) else { return }
-                    selectedPersonID = selectedPersonID == personID ? nil : personID
-                    controller.setSelected(selectedPersonID)
+                    if let personID = personID(for: value.entity) {
+                        selectedPersonID = (selectedPersonID == personID) ? nil : personID
+                        // Tapping a person is the way back to a dismissed
+                        // video window, since the documentary is now the
+                        // persistent centre of the scene rather than
+                        // something selection summons.
+                        if selectedPersonID != nil {
+                            isVideoVisible = true
+                        }
+                    }
+
+                    // Disturb the water at the point actually touched, not
+                    // just the orb's center, so the ripple originates from
+                    // wherever the viewer pinched — this only works for
+                    // entities the water controller is tracking, so tapping
+                    // elsewhere on the orb hierarchy (e.g. the headshot
+                    // attachment) is a no-op rather than an error.
+                    let localPoint = value.convert(value.location3D, from: .local, to: value.entity)
+                    waterController.disturb(sphereEntity: value.entity, at: SIMD3<Float>(localPoint))
                 }
         )
+        .onChange(of: mode) { _, _ in selectedPersonID = nil }
+        .onChange(of: selectedRole) { _, _ in selectedPersonID = nil }
+        .task { portraitStore.loadIfNeeded(for: mockPeople) }
         .persistentSystemOverlays(.hidden)
-        .onAppear {
-            // The comp is meant to be viewed by itself. Hiding the directory
-            // window also prevents it from covering the central chooser in
-            // Simulator and on device.
-            dismissWindow(id: "MainWindow")
-        }
-        .onDisappear {
-            openWindow(id: "MainWindow")
-        }
-    }
-
-    private func closeConcept() {
-        Task { @MainActor in
-            await dismissImmersiveSpace()
-        }
-    }
-}
-
-fileprivate struct Concept12CentralPanel: View {
-    @Binding var mode: Concept12Mode
-    @Binding var selectedRole: Concept12Role?
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 14) {
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 22)
-                    .fill(Color(white: 0.62).opacity(0.94))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22)
-                            .stroke(.white.opacity(0.15), lineWidth: 1)
-                    )
-
-                Image(systemName: "play.fill")
-                    .font(.system(size: 62, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 15, weight: .bold))
-                        .frame(width: 34, height: 34)
-                }
-                .buttonStyle(.plain)
-                .background(.black.opacity(0.20))
-                .clipShape(Circle())
-                .padding(12)
-            }
-            .frame(width: 520, height: 300)
-
-            Picker("Mode", selection: $mode) {
-                ForEach(Concept12Mode.allCases) { item in
-                    Text(item.rawValue).tag(item)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 280)
-
-            Menu {
-                Button("All Roles") { selectedRole = nil }
-                Divider()
-                ForEach(Concept12Role.allCases) { role in
-                    Button(role.rawValue) { selectedRole = role }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Filter: \(selectedRole?.rawValue ?? "All Roles")")
-                    Image(systemName: "chevron.down")
-                }
-                .font(.headline)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.black.opacity(0.22))
-                .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(18)
-        .glassBackgroundEffect()
-    }
-}
-
-@MainActor
-fileprivate final class Concept12CompController {
-    private struct BubbleState {
-        let person: Concept12Person
-        let root: Entity
-        let sphere: ModelEntity
-        let portraitEntity: ModelEntity
-        let tagEntities: [ModelEntity]
-    }
-
-    private var bubbles: [Int: BubbleState] = [:]
-    private let headAnchor = AnchorEntity(.head)
-    private var anchorInstalled = false
-    private var centralPanelInstalled = false
-    private var selectedPersonID: Int?
-    private var selectedRole: Concept12Role?
-
-    func build(people: [Concept12Person], in content: inout RealityViewContent) async {
-        guard bubbles.isEmpty else { return }
-
-        if !anchorInstalled {
-            headAnchor.anchoring.trackingMode = .once
-            content.add(headAnchor)
-            anchorInstalled = true
-        }
-
-        let positions = portraitPositions(count: people.count)
-
-        for (person, position) in zip(people, positions) {
-            let root = Entity()
-            root.name = "person-\(person.id)"
-            root.position = position
-            // Rotate the entire bubble toward the viewer. This is the important
-            // difference from the previous checkpoint: the backing sphere and
-            // portrait now share the same camera-facing coordinate system, so
-            // the sphere can no longer swing in front of the face.
-            root.components.set(BillboardComponent())
-
-            let sphere = ModelEntity(
-                mesh: .generateSphere(radius: 0.108),
-                materials: [SimpleMaterial(
-                    color: UIColor(white: 0.76, alpha: 0.82),
-                    roughness: 0.34,
-                    isMetallic: false
-                )]
+        .ornament(attachmentAnchor: .scene(.bottom)) {
+            TuningPanel(
+                tuning: $tuning,
+                isVideoVisible: $isVideoVisible,
+                isFilterPanelVisible: $isFilterPanelVisible
             )
-            sphere.name = "bubble-sphere"
-            sphere.components.set(InputTargetComponent())
-            sphere.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.12)]))
-            root.addChild(sphere)
-
-            let portraitEntity = await makePortraitEntity(for: person)
-            portraitEntity.position = [0, 0, 0.111]
-            root.addChild(portraitEntity)
-
-            let offsets: [SIMD3<Float>] = [
-                [-0.067, -0.105, 0.040],
-                [0.000, -0.112, 0.045],
-                [0.067, -0.105, 0.040]
-            ]
-
-            var tags: [ModelEntity] = []
-            for (index, color) in person.tagColors.enumerated() {
-                let tag = ModelEntity(
-                    mesh: .generateSphere(radius: 0.024),
-                    materials: [SimpleMaterial(color: color, roughness: 0.42, isMetallic: false)]
-                )
-                tag.position = offsets[min(index, offsets.count - 1)]
-                root.addChild(tag)
-                tags.append(tag)
-            }
-
-            bubbles[person.id] = BubbleState(
-                person: person,
-                root: root,
-                sphere: sphere,
-                portraitEntity: portraitEntity,
-                tagEntities: tags
-            )
-            headAnchor.addChild(root)
         }
-
-        refreshVisuals()
     }
 
-    func installCentralPanel(_ panel: ViewAttachmentEntity?) {
-        guard let panel else { return }
-        panel.position = [0, 0.02, -1.18]
-        panel.components.set(BillboardComponent())
-
-        if panel.parent == nil {
-            headAnchor.addChild(panel)
-        }
-        centralPanelInstalled = true
-    }
-
-    func setSelected(_ id: Int?) {
-        selectedPersonID = id
-        refreshVisuals()
-    }
-
-    func applyFilter(_ role: Concept12Role?) {
-        selectedRole = role
-        refreshVisuals()
-    }
-
-    func personID(for entity: Entity) -> Int? {
+    /// Walks up from the tapped entity (which may be the water sphere child) to find
+    /// the orb root, whose name encodes the person id as "orb-<id>".
+    private func personID(for entity: Entity) -> Int? {
         var current: Entity? = entity
         while let candidate = current {
-            if candidate.name.hasPrefix("person-"),
-               let id = Int(candidate.name.dropFirst("person-".count)) {
+            if candidate.name.hasPrefix("orb-"),
+               let id = Int(candidate.name.dropFirst("orb-".count)) {
                 return id
             }
             current = candidate.parent
@@ -333,94 +360,785 @@ fileprivate final class Concept12CompController {
         return nil
     }
 
-    private func refreshVisuals() {
-        for (id, state) in bubbles {
-            let selected = selectedPersonID == id
-            let dimmed = selectedRole != nil && state.person.role != selectedRole
+    // MARK: Dome construction
 
-            state.root.scale = SIMD3<Float>(repeating: selected ? 1.10 : 1.0)
-            state.root.components.set(OpacityComponent(opacity: dimmed ? 0.32 : 1.0))
+    /// Positions for the whole roster at the current field of view. The
+    /// vertical arc tracks the horizontal one so widening the view wraps
+    /// faces around the viewer instead of stretching them into a thin band.
+    private func domePositions() -> [SIMD3<Float>] {
+        let horizontalArc = Float(tuning.fieldOfViewDegrees)
+        let verticalArc = max(40, horizontalArc * 0.46)
 
-            let bubbleColor = selected
-                ? UIColor(white: 0.90, alpha: 0.90)
-                : UIColor(white: 0.76, alpha: 0.82)
-            state.sphere.model?.materials = [SimpleMaterial(
-                color: bubbleColor,
-                roughness: selected ? 0.24 : 0.34,
-                isMetallic: false
-            )]
+        return DomeLayout.positions(
+            count: mockPeople.count,
+            radius: domeRadius,
+            verticalArcDegrees: verticalArc,
+            horizontalArcDegrees: horizontalArc,
+            center: domeCenter
+        )
+    }
+
+    @MainActor
+    private func buildDome(in content: inout RealityViewContent, attachments: RealityViewAttachments) {
+        let positions = domePositions()
+
+        for (index, person) in mockPeople.enumerated() {
+            guard let orb = makeOrbEntity(for: person, attachments: attachments) else { continue }
+            orb.position = positions[index]
+            // Point the orb back at the viewer's eye level so every sphere on
+            // the dome reads correctly instead of every orb sharing one
+            // identical, unrotated pose.
+            orb.look(at: domeCenter, from: orb.position, relativeTo: nil)
+            orb.name = "orb-\(person.id)"
+            orbEntities[person.id] = orb
+            floatController.register(
+                personID: person.id,
+                entity: orb,
+                basePosition: positions[index],
+                index: index
+            )
+            content.add(orb)
         }
     }
 
-    private func makePortraitEntity(for person: Concept12Person) async -> ModelEntity {
-        guard let image = UIImage(named: person.portraitAssetName),
-              let cgImage = image.cgImage else {
-            assertionFailure("Missing Concept 12 portrait asset: \(person.portraitAssetName)")
-            return missingPortraitEntity(label: person.portraitAssetName)
+    @MainActor
+    private func makeOrbEntity(for person: Person, attachments: RealityViewAttachments) -> Entity? {
+        guard let orb = try? Entity.load(named: "PersonOrb", in: realityKitContentBundle) else { return nil }
+
+        // The loaded asset's own "GlassSphere" geometry/material is replaced
+        // with a generated water sphere (see `WaterSphereEffect.swift`); the
+        // asset is still used for its `AttachmentAnchor` and `PointLight`
+        // children so the headshot placement and backlight logic don't need
+        // to change.
+        if let glassSphere = orb.findEntity(named: "GlassSphere") {
+            glassSphere.removeFromParent()
         }
+
+        let waterSphere = waterController.makeSphereEntity(for: person.id)
+        orb.addChild(waterSphere)
+
+        if let anchor = orb.findEntity(named: "AttachmentAnchor"),
+           let attachment = attachments.entity(for: person.id) {
+            // Billboard the headshot attachment itself (not the orb root) so
+            // the photo always faces the viewer no matter where the orb sits
+            // on the dome, while the water sphere and its light stay put.
+            attachment.components.set(BillboardComponent())
+            // `look(at:)` aims the orb's forward (-Z) at the viewer, so a
+            // positive Z offset pushes the photo deeper into the sphere,
+            // away from the viewer. If it reads as popping out in front of
+            // the water on device, flip this sign.
+            attachment.position = SIMD3<Float>(0, 0, Self.headshotInset)
+            attachment.scale = SIMD3<Float>(repeating: Self.headshotScale)
+            anchor.addChild(attachment)
+        }
+
+        if let cluster = attachments.entity(for: AppBubbleCluster.attachmentID(for: person)) {
+            // Billboarded so the app bubbles stay flat circles facing the
+            // viewer rather than turning into ellipses off to the sides.
+            cluster.components.set(BillboardComponent())
+            // Scale raised after the first device pass. At 0.5 these rendered
+            // as small coloured dots — which is precisely what the workshop
+            // asked to move away from — and the symbol inside was illegible.
+            // Dropped slightly further below the sphere to match.
+            cluster.position = SIMD3<Float>(0, -0.068, 0)
+            cluster.scale = SIMD3<Float>(repeating: 0.85)
+            orb.addChild(cluster)
+        }
+
+        applyGlow(to: orb, person: person, isActive: false, matchesFilter: true)
+
+        return orb
+    }
+
+    @MainActor
+    private func updateDome(in content: inout RealityViewContent, attachments: RealityViewAttachments) {
+        let visibleIDs = Set(filteredPeople.map(\.id))
+        let positions = domePositions()
+        let orbScale = Float(tuning.bubbleScale)
+
+        for (index, person) in mockPeople.enumerated() {
+            guard let orb = orbEntities[person.id] else { continue }
+            let matchesFilter = visibleIDs.contains(person.id)
+            let isActive = person.id == selectedPersonID
+            let basePosition = positions[index]
+
+            // Filtered-out people fade rather than disappear, so the dome
+            // stays one continuous surface of faces instead of developing
+            // holes where a role was filtered away. `OpacityComponent` fades
+            // the whole orb hierarchy — water sphere, face and app bubbles
+            // together — so the parts can't drift out of sync.
+            orb.components.set(
+                OpacityComponent(opacity: matchesFilter ? 1 : Self.filteredOutOpacity)
+            )
+            // Faded people are background, not targets. Without this they
+            // would still take taps and spawn ripples while reading as
+            // inactive, which is worse than hiding them was.
+            setInputEnabled(matchesFilter, on: orb)
+
+            orb.scale = SIMD3<Float>(repeating: orbScale)
+            // Re-aim from the new spot after a field-of-view change. This also
+            // reassigns position, which the float controller picks back up on
+            // the next frame.
+            orb.look(at: domeCenter, from: basePosition, relativeTo: nil)
+            floatController.setBasePosition(basePosition, for: person.id)
+            applyGlow(to: orb, person: person, isActive: isActive, matchesFilter: matchesFilter)
+        }
+
+        if let panelAttachment = attachments.entity(for: "videoPanel") {
+            panelAttachment.isEnabled = isVideoVisible
+            panelAttachment.position = SIMD3<Float>(0, DomeLayout.defaultEyeLevel, -videoDistance)
+            if panelAttachment.parent == nil {
+                content.add(panelAttachment)
+            }
+        }
+
+        if let panelAttachment = attachments.entity(for: "universePanel") {
+            panelAttachment.isEnabled = isFilterPanelVisible
+            panelAttachment.position = filterPanelPosition
+            if panelAttachment.parent == nil {
+                content.add(panelAttachment)
+            }
+        }
+
+        if let panelAttachment = attachments.entity(for: "selectionPanel") {
+            panelAttachment.isEnabled = selectedPersonID != nil
+            panelAttachment.position = selectionPanelPosition
+            if panelAttachment.parent == nil {
+                // Yawed off-centre, so without billboarding it would present
+                // at an angle to the viewer. Set once on insert rather than
+                // every update, since it never changes.
+                panelAttachment.components.set(BillboardComponent())
+                content.add(panelAttachment)
+            }
+        }
+    }
+
+    /// Toggles tap and hover targeting for a whole orb. The water sphere is
+    /// the only child carrying an `InputTargetComponent`, and disabling it
+    /// also suppresses the hover effect, so one switch covers both.
+    @MainActor
+    private func setInputEnabled(_ isEnabled: Bool, on orb: Entity) {
+        guard let sphere = orb.findEntity(named: "GlassSphere"),
+              var input = sphere.components[InputTargetComponent.self] else { return }
+        input.isEnabled = isEnabled
+        sphere.components.set(input)
+    }
+
+    /// Dims the sphere's backlight for inactive people and brightens it, tinted to the
+    /// person's accent color, for the currently active/selected person. Keeping every
+    /// orb's light at a low idle intensity (rather than off) avoids the ~8-light
+    /// RealityKit budget being visually obvious as orbs pop on/off.
+    @MainActor
+    private func applyGlow(to orb: Entity, person: Person, isActive: Bool, matchesFilter: Bool) {
+        guard let light = orb.findEntity(named: "PointLight") else { return }
+        let color = isActive ? person.accentColor : UIColor.white
+
+        // The backlight has to track the fade. `OpacityComponent` does not
+        // attenuate light a `PointLight` casts, so a filtered-out orb left at
+        // full idle intensity stays conspicuous however transparent its
+        // geometry becomes.
+        let intensity: Float = if isActive {
+            4000
+        } else if matchesFilter {
+            40
+        } else {
+            8
+        }
+
+        light.components[PointLightComponent.self] = PointLightComponent(
+            cgColor: color.cgColor,
+            intensity: intensity,
+            attenuationRadius: 0.3
+        )
+    }
+}
+
+// MARK: - Persona Portrait Store
+
+/// Lifts each headshot's subject off its background so faces can be rendered
+/// as persona-style cut-outs rather than flat photos.
+///
+/// Uses Vision's `GenerateForegroundInstanceMaskRequest` — the same
+/// subject-lifting model behind "lift subject from background" in Photos —
+/// rather than hand-rolling segmentation or shipping pre-cut assets, so the
+/// treatment keeps working when the design team swaps the photo pool.
+///
+/// Keyed by asset name, not person id: the roster is forty people drawn from
+/// twelve bundled images, so caching per asset does twelve lifts instead of
+/// forty.
+@MainActor
+@Observable
+fileprivate final class PersonaPortraitStore {
+
+    private(set) var portraits: [String: UIImage] = [:]
+
+    /// Assets whose lift failed or produced no foreground instance. Tracked
+    /// so a failure falls back to the circular crop permanently instead of
+    /// being retried on every view update.
+    private var unavailable: Set<String> = []
+    private var inFlight: Set<String> = []
+
+    func portrait(for person: Person) -> UIImage? {
+        portraits[person.headshot]
+    }
+
+    /// Kicks off a lift for any asset not already done, failed or running.
+    /// Safe to call repeatedly.
+    func loadIfNeeded(for people: [Person]) {
+        let names = Set(people.map(\.headshot))
+        for name in names where portraits[name] == nil
+            && !unavailable.contains(name)
+            && !inFlight.contains(name) {
+            inFlight.insert(name)
+            Task { await lift(assetName: name) }
+        }
+    }
+
+    private func lift(assetName: String) async {
+        defer { inFlight.remove(assetName) }
+
+        guard let cgImage = UIImage(named: assetName)?.cgImage else {
+            unavailable.insert(assetName)
+            return
+        }
+
+        if let lifted = await Self.liftSubject(from: cgImage) {
+            portraits[assetName] = lifted
+        } else {
+            unavailable.insert(assetName)
+        }
+    }
+
+    /// Runs off the main actor — segmentation on a dozen images would
+    /// otherwise stutter the dome while it builds.
+    private nonisolated static func liftSubject(from cgImage: CGImage) async -> UIImage? {
+        let handler = ImageRequestHandler(cgImage)
 
         do {
-            let texture = try await TextureResource(
-                image: cgImage,
-                withName: "concept12-\(person.portraitAssetName)",
-                options: TextureResource.CreateOptions(semantic: .color)
+            guard let observation = try await handler.perform(GenerateForegroundInstanceMaskRequest()),
+                  !observation.allInstances.isEmpty else { return nil }
+
+            // Cropping to the subject's extent means the returned image is
+            // the head and shoulders, so the view can size it directly
+            // instead of guessing where in the frame the person sat.
+            let masked = try observation.generateMaskedImage(
+                for: observation.allInstances,
+                imageFrom: handler,
+                croppedToInstancesExtent: true
             )
 
-            var material = UnlitMaterial(texture: texture)
-            material.blending = .transparent(opacity: .init(floatLiteral: 1.0))
-
-            return ModelEntity(
-                mesh: .generatePlane(width: 0.205, height: 0.205, cornerRadius: 0),
-                materials: [material]
-            )
+            let ciImage = CIImage(cvPixelBuffer: masked)
+            guard let output = sharedContext.createCGImage(ciImage, from: ciImage.extent) else { return nil }
+            return UIImage(cgImage: output)
         } catch {
-            assertionFailure("Could not create Concept 12 portrait texture \(person.portraitAssetName): \(error)")
-            return missingPortraitEntity(label: person.portraitAssetName)
+            // Deliberately quiet: there is a designed fallback (the circular
+            // crop in `PersonaPortrait`), this runs without user action, and
+            // the asset is recorded in `unavailable` so it is not retried.
+            return nil
         }
     }
 
-    private func missingPortraitEntity(label: String) -> ModelEntity {
-        let material = UnlitMaterial(color: UIColor.magenta)
+    /// One context for all lifts. `CIContext` is expensive to build and is
+    /// safe to share, so creating one per image would waste most of the work.
+    private nonisolated static let sharedContext = CIContext()
+}
+
+// MARK: - Water Orb Controller
+
+/// Owns one `WaterSphereMesh`/`ModelEntity` per person and regenerates its
+/// mesh only while that orb has active ripples, so idle orbs (the common
+/// case) cost nothing extra per frame beyond a resting sphere.
+@MainActor
+fileprivate final class WaterOrbController {
+
+    private struct WaterState {
+        let mesh: WaterSphereMesh
+        let entity: ModelEntity
+        var ripples: [WaterRipple] = []
+    }
+
+    private var statesByPersonID: [Int: WaterState] = [:]
+    private var elapsedTime: Float = 0
+    private let sphereRadius: Float = 0.05
+
+    /// Creates the water sphere entity for a person's orb. Named "GlassSphere"
+    /// (matching the original asset's part name) so existing input-target /
+    /// hover-effect / tap-lookup code elsewhere in this file keeps working
+    /// unmodified.
+    func makeSphereEntity(for personID: Int) -> ModelEntity {
+        let mesh = WaterSphereMesh(radius: sphereRadius)
+        let resource = try? mesh.generate(ripples: [], elapsedTime: 0)
         let entity = ModelEntity(
-            mesh: .generatePlane(width: 0.205, height: 0.205, cornerRadius: 0),
-            materials: [material]
+            mesh: resource ?? .generateSphere(radius: sphereRadius),
+            materials: [WaterSphereMaterial.make()]
         )
-        entity.name = "MISSING-PORTRAIT-\(label)"
+        entity.name = "GlassSphere"
+        entity.components.set(InputTargetComponent())
+        entity.components.set(HoverEffectComponent())
+        entity.components.set(CollisionComponent(shapes: [.generateSphere(radius: sphereRadius)]))
+
+        statesByPersonID[personID] = WaterState(mesh: mesh, entity: entity)
         return entity
     }
 
-    private func portraitPositions(count: Int) -> [SIMD3<Float>] {
-        var positions: [SIMD3<Float>] = []
+    /// Starts a new ripple at `localPoint` (in the sphere entity's own local
+    /// space) if `sphereEntity` is a water sphere this controller owns.
+    func disturb(sphereEntity: Entity, at localPoint: SIMD3<Float>) {
+        guard let (personID, _) = statesByPersonID.first(where: { $0.value.entity === sphereEntity }) else { return }
+        guard var state = statesByPersonID[personID] else { return }
 
-        // Positions are now relative to a head anchor captured once at launch,
-        // so Simulator and the headset begin with the comp centered in front of
-        // the viewer instead of using an arbitrary world-space origin.
-        let leftXs: [Float] = [-1.00, -0.76, -0.52]
-        let rightXs: [Float] = [0.52, 0.76, 1.00]
-        let verticalYs: [Float] = [0.48, 0.20, -0.08]
+        let direction = simd_length(localPoint) > 0.0001 ? simd_normalize(localPoint) : SIMD3<Float>(0, 0, 1)
+        state.ripples.append(WaterRipple(originDirection: direction, startTime: elapsedTime))
+        // Cap concurrent ripples per orb so a flurry of taps can't make mesh
+        // regeneration arbitrarily expensive.
+        if state.ripples.count > 4 {
+            state.ripples.removeFirst(state.ripples.count - 4)
+        }
+        statesByPersonID[personID] = state
+    }
 
-        for x in leftXs {
-            for y in verticalYs {
-                positions.append([x, y, -1.22])
+    func update(deltaTime: TimeInterval) {
+        elapsedTime += Float(min(deltaTime, 1.0 / 20.0))
+
+        for personID in Array(statesByPersonID.keys) {
+            guard var state = statesByPersonID[personID] else { continue }
+
+            state.ripples.removeAll { elapsedTime - $0.startTime > state.mesh.rippleLifetime }
+            guard !state.ripples.isEmpty else { continue }
+
+            if let resource = try? state.mesh.generate(ripples: state.ripples, elapsedTime: elapsedTime) {
+                state.entity.model?.mesh = resource
+            }
+            statesByPersonID[personID] = state
+        }
+    }
+}
+
+// MARK: - Orb Float Controller
+
+/// Gives every orb a slow, independent drift so the field of faces reads as
+/// floating in the space rather than pinned to an invisible lattice — the
+/// workshop note was that the faces should feel like they are floating. A
+/// small vertical bob plus a slower, smaller lateral sway is enough to break
+/// the lattice read without making the dome feel unstable.
+@MainActor
+fileprivate final class OrbFloatController {
+
+    private struct FloatState {
+        let entity: Entity
+        var basePosition: SIMD3<Float>
+        let phase: Float
+    }
+
+    private var statesByPersonID: [Int: FloatState] = [:]
+    private var elapsedTime: Float = 0
+
+    /// Peak vertical travel, in meters.
+    private let bobAmplitude: Float = 0.022
+    /// Peak lateral travel, in meters. Deliberately smaller and slower than
+    /// the bob so the motion reads as buoyancy rather than orbiting.
+    private let swayAmplitude: Float = 0.010
+    private let bobSpeed: Float = 0.6
+    private let swaySpeed: Float = 0.23
+
+    func register(personID: Int, entity: Entity, basePosition: SIMD3<Float>, index: Int) {
+        // Golden-angle phase spread keeps neighbors out of sync so the dome
+        // never bobs in visible unison.
+        statesByPersonID[personID] = FloatState(
+            entity: entity,
+            basePosition: basePosition,
+            phase: Float(index) * 2.399963
+        )
+    }
+
+    func setBasePosition(_ position: SIMD3<Float>, for personID: Int) {
+        guard var state = statesByPersonID[personID] else { return }
+        state.basePosition = position
+        statesByPersonID[personID] = state
+    }
+
+    func update(deltaTime: TimeInterval) {
+        elapsedTime += Float(min(deltaTime, 1.0 / 20.0))
+
+        for state in statesByPersonID.values {
+            let bob = sin(elapsedTime * bobSpeed + state.phase) * bobAmplitude
+            let sway = cos(elapsedTime * swaySpeed + state.phase) * swayAmplitude
+            state.entity.position = state.basePosition + SIMD3<Float>(sway, bob, 0)
+        }
+    }
+}
+
+// MARK: - Attachments
+
+/// The face as it hangs inside a water sphere.
+///
+/// This is the "spatial persona photo instead of a 2D photo" note from the
+/// workshop. Real Spatial Personas are a FaceTime-only API with no way to
+/// render an arbitrary person, so the treatment is photographic rather than
+/// avatar-based: the subject is lifted out of its background (see
+/// `PersonaPortraitStore`) and the cut-out is layered in front of a soft
+/// accent-tinted disc using `offset(z:)`. The gap between those two layers
+/// parallaxes as the viewer moves, which is what sells the face as occupying
+/// the inside of the sphere instead of being printed on it.
+fileprivate struct PersonaPortrait: View {
+    let person: Person
+    let portrait: UIImage?
+    let isSelected: Bool
+    var diameter: Double = 70
+
+    var body: some View {
+        ZStack {
+            // Neutral backing first. The accent tint alone washes out against
+            // a bright room — on device the faces read as barely-there against
+            // a white wall — so a dark disc sits directly behind the head to
+            // give the cut-out something to separate from.
+            Circle()
+                .fill(.black.opacity(isSelected ? 0.45 : 0.32))
+                .blur(radius: diameter * 0.1)
+                .frame(width: diameter * 0.9, height: diameter * 0.9)
+
+            // Stands in for light scattering through the water behind the
+            // head, and reads as a rim glow around the darker backing.
+            Circle()
+                .fill(Color(person.accentColor).opacity(isSelected ? 0.55 : 0.34))
+                .blur(radius: diameter * 0.17)
+                .frame(width: diameter, height: diameter)
+
+            if let portrait {
+                Image(uiImage: portrait)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: diameter * 0.94, height: diameter * 0.94)
+                    .shadow(color: .black.opacity(0.4), radius: diameter * 0.07, y: diameter * 0.03)
+                    // Toward the viewer, so the head sits proud of the
+                    // backing disc rather than coplanar with it.
+                    .offset(z: isSelected ? diameter * 0.22 : diameter * 0.13)
+            } else {
+                // Until the lift finishes — or if it fails on a given photo —
+                // fall back to the circular crop so the dome is never empty.
+                Image(person.headshot)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: diameter, height: diameter)
+                    .clipShape(Circle())
+                    .offset(z: diameter * 0.08)
             }
         }
-        for x in rightXs {
-            for y in verticalYs {
-                positions.append([x, y, -1.22])
+        // No grayscale on faces that pass the filter. Filter state is carried
+        // entirely by `OpacityComponent` on the orb now, so desaturating here
+        // only cost legibility.
+        .saturation(isSelected ? 1.2 : 1)
+        .animation(.easeInOut(duration: 0.25), value: isSelected)
+    }
+}
+
+fileprivate struct PersonAttachment: View {
+    let person: Person
+    let portrait: UIImage?
+    let isSelected: Bool
+
+    var body: some View {
+        PersonaPortrait(person: person, portrait: portrait, isSelected: isSelected)
+            .overlay(
+                Circle()
+                    .stroke(Color(person.accentColor), lineWidth: isSelected ? 3 : 0)
+                    .frame(width: 70, height: 70)
+            )
+            .accessibilityLabel("\(person.name), \(person.role.rawValue)")
+    }
+}
+
+/// The flat app bubbles that hang under each face, replacing the colour dots
+/// in the comp. Rendered as one attachment per person rather than one per app
+/// so a forty-person roster costs forty attachments, not around ninety.
+fileprivate struct AppBubbleCluster: View {
+    let apps: [AppTag]
+    let isEmphasized: Bool
+
+    static func attachmentID(for person: Person) -> String {
+        "apps-\(person.id)"
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(apps) { app in
+                Image(systemName: app.symbol)
+                    .font(.system(size: isEmphasized ? 26 : 19, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: isEmphasized ? 52 : 38, height: isEmphasized ? 52 : 38)
+                    .background(app.tint.opacity(0.92), in: Circle())
+                    .accessibilityLabel(app.label)
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: isEmphasized)
+    }
+}
 
-        let rowOneXs: [Float] = [-1.02, -0.78, -0.54, -0.30, -0.06, 0.18, 0.42, 0.66, 0.90, 1.14]
-        for x in rowOneXs {
-            positions.append([x, -0.40, -1.16])
+/// The documentary window at the centre of the dome. Persistent rather than
+/// summoned by selection, carrying its own title frame, and sized from the
+/// `videoScale` tuning slider.
+fileprivate struct DocumentaryPanel: View {
+    let person: Person?
+    let width: CGFloat
+    let height: CGFloat
+    let onClose: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 18)
+                .fill(.black)
+
+            // Scrim behind the title so it stays legible once real footage
+            // replaces the placeholder fill.
+            LinearGradient(
+                colors: [.black.opacity(0.8), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: height * 0.36)
+            .clipShape(
+                UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18)
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Watch the Shared Visions Documentary")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                if let person {
+                    Text("\(person.name) · \(person.role.rawValue)")
+                        .font(.subheadline)
+                        // Explicit white rather than `.secondary`, which
+                        // renders near-invisible over the black video panel.
+                        .foregroundStyle(.white.opacity(0.82))
+                }
+            }
+            // Extra trailing room so a long name never runs under the close
+            // button in the opposite corner.
+            .padding(.init(top: 22, leading: 24, bottom: 20, trailing: 64))
+
+            Image(systemName: "play.circle.fill")
+                .font(.system(size: min(width, height) * 0.22))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: width, height: height)
         }
-
-        let rowTwoXs: [Float] = [-0.94, -0.68, -0.42, -0.16, 0.10, 0.36, 0.62, 0.88]
-        for x in rowTwoXs {
-            positions.append([x, -0.66, -1.10])
+        .frame(width: width, height: height)
+        .overlay(alignment: .topTrailing) {
+            Button("Close video", systemImage: "xmark", action: onClose)
+                .labelStyle(.iconOnly)
+                .buttonBorderShape(.circle)
+                .padding(12)
         }
+        .padding(20)
+        .glassBackgroundEffect()
+    }
+}
 
-        return Array(positions.prefix(count))
+/// The mode switch and role filter, moved off the video window into their own
+/// panel sitting at the same depth as the faces so they read as belonging to
+/// the community rather than to the documentary. Modeled on the "Interview
+/// Universe" overlay from the earlier wireframes.
+fileprivate struct InterviewUniversePanel: View {
+    @Binding var mode: ChooserMode
+    @Binding var selectedRole: Role?
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Interview Universe")
+                        .font(.title3.weight(.semibold))
+                    Text("Filter to bring the relevant interviews forward")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Close filters", systemImage: "xmark", action: onClose)
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.circle)
+            }
+
+            Picker("Mode", selection: $mode) {
+                ForEach(ChooserMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            HStack(spacing: 8) {
+                RoleFilterChip(title: "All", isSelected: selectedRole == nil) {
+                    selectedRole = nil
+                }
+                ForEach(Role.allCases) { role in
+                    RoleFilterChip(title: role.rawValue, isSelected: selectedRole == role) {
+                        selectedRole = role
+                    }
+                }
+            }
+            .disabled(mode != .community)
+            .opacity(mode == .community ? 1 : 0.4)
+        }
+        .frame(width: 440, alignment: .leading)
+        .padding(24)
+        .glassBackgroundEffect()
+    }
+}
+
+fileprivate struct RoleFilterChip: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(isSelected ? Color.accentColor : Color.clear)
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Selection Overlay
+
+/// The per-person detail panel, opened by selecting a face.
+///
+/// This is the workshop's "add in the selection with the overlay, from the
+/// previous wireframes" note, anchored to the Filter: Designer screenshot.
+/// `InterviewUniversePanel` already covers filtering, so this covers the
+/// other half — what selecting someone actually gets you — and deliberately
+/// borrows that panel's title/subtitle/close layout so the two read as one
+/// family rather than two unrelated windows.
+fileprivate struct PersonSelectionOverlay: View {
+    let person: Person
+    let portrait: UIImage?
+    let onWatch: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 18) {
+                PersonaPortrait(
+                    person: person,
+                    portrait: portrait,
+                    isSelected: true,
+                    diameter: 104
+                )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(person.name)
+                        .font(.title2.weight(.semibold))
+                    Text(person.role.rawValue)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 8)
+
+                Spacer()
+
+                Button("Close profile", systemImage: "xmark", action: onClose)
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.circle)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Appears in")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    ForEach(person.apps) { app in
+                        Label(app.label, systemImage: app.symbol)
+                            .font(.caption)
+                            .labelStyle(.titleAndIcon)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(app.tint.opacity(0.28), in: Capsule())
+                    }
+                }
+            }
+
+            // The person's name sits directly above, so repeating it here
+            // would be redundant — and splitting a display name to get a
+            // first name is wrong for mononyms and multi-part given names.
+            Button("Watch interview", systemImage: "play.fill", action: onWatch)
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(width: 420, alignment: .leading)
+        .padding(24)
+        .glassBackgroundEffect()
+        .accessibilityLabel("Profile for \(person.name), \(person.role.rawValue)")
+    }
+}
+
+// MARK: - Prototype Tuning
+
+/// Lives in the scene's bottom ornament — the slot the mode switch used to
+/// occupy — so the knobs are reachable without sitting inside the concept's
+/// visual field.
+fileprivate struct TuningPanel: View {
+    @Binding var tuning: DesignTuning
+    @Binding var isVideoVisible: Bool
+    @Binding var isFilterPanelVisible: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Prototype Tuning")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            TuningSlider(title: "Video size", value: $tuning.videoScale, range: 0.5...2.5)
+            TuningSlider(title: "Bubble size", value: $tuning.bubbleScale, range: 0.5...2.0)
+            TuningSlider(
+                title: "Field of view",
+                value: $tuning.fieldOfViewDegrees,
+                range: 90...300,
+                unit: "°",
+                fractionLength: 0
+            )
+
+            HStack(spacing: 10) {
+                Toggle("Video", isOn: $isVideoVisible)
+                Toggle("Filters", isOn: $isFilterPanelVisible)
+            }
+            .toggleStyle(.button)
+            .font(.caption)
+        }
+        .frame(width: 340, alignment: .leading)
+        .padding(18)
+        .glassBackgroundEffect()
+    }
+}
+
+fileprivate struct TuningSlider: View {
+    let title: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var unit: String = "×"
+    var fractionLength: Int = 2
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(value, format: .number.precision(.fractionLength(fractionLength)))
+                    + Text(unit)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            Slider(value: $value, in: range)
+                .accessibilityLabel(title)
+        }
     }
 }
 
