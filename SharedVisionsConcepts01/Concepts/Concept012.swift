@@ -269,14 +269,9 @@ struct Concept012: View {
                     PersonAttachment(
                         person: person,
                         portrait: portraitStore.portrait(for: person),
-                        isSelected: person.id == selectedPersonID
+                        isSelected: person.id == selectedPersonID,
+                        appsEmphasized: mode == .applications
                     )
-                }
-            }
-
-            ForEach(mockPeople) { person in
-                Attachment(id: AppBubbleCluster.attachmentID(for: person)) {
-                    AppBubbleCluster(apps: person.apps, isEmphasized: mode == .applications)
                 }
             }
 
@@ -434,22 +429,6 @@ struct Concept012: View {
             attachment.position = SIMD3<Float>(0, 0, Self.headshotInset)
             attachment.scale = SIMD3<Float>(repeating: Self.headshotScale)
             anchor.addChild(attachment)
-        }
-
-        if let cluster = attachments.entity(for: AppBubbleCluster.attachmentID(for: person)) {
-            // Billboarded so the app bubbles stay flat circles facing the
-            // viewer rather than turning into ellipses off to the sides.
-            cluster.components.set(BillboardComponent())
-            // Scale raised after the first device pass. At 0.5 these rendered
-            // as small coloured dots — which is precisely what the workshop
-            // asked to move away from — and the symbol inside was illegible.
-            //
-            // Dropped further than the old single row needed: a hexagon ring
-            // is roughly twice as tall as the row it replaced, so the cluster
-            // has to clear the sphere by more. Worth confirming on device.
-            cluster.position = SIMD3<Float>(0, -0.098, 0)
-            cluster.scale = SIMD3<Float>(repeating: 0.85)
-            orb.addChild(cluster)
         }
 
         applyGlow(to: orb, person: person, isActive: false, matchesFilter: true)
@@ -848,69 +827,112 @@ fileprivate struct PersonaPortrait: View {
     }
 }
 
+/// A person's face with their app categories ringing it.
+///
+/// The app icon is a hexagon of dots around an empty centre; here the person's
+/// face *is* that centre, with one dot per category on the hexagon's vertices.
+///
+/// Face and dots share a single attachment deliberately. It keeps the ring
+/// radius expressed in points relative to the face — no points-to-metres
+/// guesswork — and costs one attachment per person instead of two, which on a
+/// forty-person dome is forty fewer entities.
 fileprivate struct PersonAttachment: View {
     let person: Person
     let portrait: UIImage?
     let isSelected: Bool
+    let appsEmphasized: Bool
+
+    /// Face diameter in points. Its world size comes from the attachment's
+    /// own scale (`headshotScale`), so this only sets the proportions between
+    /// the face and the ring around it.
+    private let faceDiameter: Double = 70
+
+    /// Distance from the face's centre out to a dot's centre.
+    ///
+    /// The face renders at `headshotScale` (0.78) of the water sphere's
+    /// diameter, so the sphere's edge sits at roughly `faceDiameter / 0.78 / 2`
+    /// — about 45pt — in this view's coordinates. A radius of 0.95 puts the
+    /// dots comfortably outside the glass rather than embedded in it.
+    private var ringRadius: Double { faceDiameter * 0.95 }
+
+    private var extent: Double {
+        let outermost = ringRadius * AppBubbleRing.radiusMultiplier(forRing: ringCount - 1)
+        return (outermost + AppBubbleRing.dotDiameter(isEmphasized: appsEmphasized)) * 2
+    }
+
+    private var ringCount: Int {
+        max(1, Int((Double(person.apps.count) / 6).rounded(.up)))
+    }
 
     var body: some View {
-        PersonaPortrait(person: person, portrait: portrait, isSelected: isSelected)
+        ZStack {
+            AppBubbleRing(
+                apps: person.apps,
+                isEmphasized: appsEmphasized,
+                ringRadius: ringRadius
+            )
+
+            PersonaPortrait(
+                person: person,
+                portrait: portrait,
+                isSelected: isSelected,
+                diameter: faceDiameter
+            )
             .overlay(
                 Circle()
                     .stroke(person.accentColor, lineWidth: isSelected ? 3 : 0)
-                    .frame(width: 70, height: 70)
+                    .frame(width: faceDiameter, height: faceDiameter)
             )
-            .accessibilityLabel("\(person.name), \(person.role.rawValue)")
+        }
+        .frame(width: extent, height: extent)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(person.name), \(person.role.rawValue)")
     }
 }
 
-/// The app bubbles that hang under each face.
+/// The category dots arranged around a person's bubble.
 ///
-/// Laid out on the same hexagon as the app icon: index 0 at the upper-right
-/// vertex, proceeding clockwise, so the motif in the mark and the motif around
-/// a person are literally the same geometry. A seventh app starts a second
-/// hexagon below the first rather than crowding the ring.
-///
-/// Rendered as one attachment per person rather than one per app so a
-/// forty-person roster costs forty attachments, not around ninety.
-fileprivate struct AppBubbleCluster: View {
+/// Uses the brand hexagon: index 0 at the upper-right vertex, proceeding
+/// clockwise, the same geometry and order as the dots in the app icon. A
+/// seventh category starts a second, wider concentric ring — "another loop"
+/// outside the first, since in this arrangement the dots surround the face
+/// rather than stacking below it.
+fileprivate struct AppBubbleRing: View {
     let apps: [AppTag]
     let isEmphasized: Bool
+    let ringRadius: Double
 
-    static func attachmentID(for person: Person) -> String {
-        "apps-\(person.id)"
+    static func dotDiameter(isEmphasized: Bool) -> Double {
+        isEmphasized ? 28 : 21
     }
 
-    private var dotDiameter: Double { isEmphasized ? 30 : 21 }
-    private var ringRadius: Double { dotDiameter * 1.35 }
-    private var ringExtent: Double { ringRadius * 2 + dotDiameter }
+    /// Each further loop sits proportionally outside the one before it.
+    static func radiusMultiplier(forRing ring: Int) -> Double {
+        1 + Double(ring) * 0.46
+    }
+
+    private var dotDiameter: Double { Self.dotDiameter(isEmphasized: isEmphasized) }
 
     private var ringCount: Int {
         max(1, Int((Double(apps.count) / 6).rounded(.up)))
     }
 
     var body: some View {
-        VStack(spacing: dotDiameter * 0.28) {
+        ZStack {
             ForEach(0..<ringCount, id: \.self) { ring in
-                hexRing(ring)
+                let start = ring * 6
+                let end = min(start + 6, apps.count)
+                let radius = ringRadius * Self.radiusMultiplier(forRing: ring)
+
+                // Fixed ranges over a constant per-person collection, so
+                // index identity is safe here.
+                ForEach(start..<end, id: \.self) { index in
+                    bubble(apps[index])
+                        .offset(SharedVisionsBrand.hexagonVertex(index - start, radius: radius))
+                }
             }
         }
         .animation(.easeInOut(duration: 0.25), value: isEmphasized)
-    }
-
-    /// One hexagon's worth of apps. Ranges are fixed for a given person, so
-    /// index identity is safe here.
-    private func hexRing(_ ring: Int) -> some View {
-        let start = ring * 6
-        let end = min(start + 6, apps.count)
-
-        return ZStack {
-            ForEach(start..<end, id: \.self) { index in
-                bubble(apps[index])
-                    .offset(SharedVisionsBrand.hexagonVertex(index - start, radius: ringRadius))
-            }
-        }
-        .frame(width: ringExtent, height: ringExtent)
     }
 
     private func bubble(_ app: AppTag) -> some View {
@@ -922,6 +944,7 @@ fileprivate struct AppBubbleCluster: View {
             .accessibilityLabel(app.label)
     }
 }
+
 
 /// The documentary window at the centre of the dome. Persistent rather than
 /// summoned by selection, carrying its own title frame, and sized from the

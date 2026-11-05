@@ -79,6 +79,32 @@ and billboarded since it sits off-centre.
 `InterviewUniversePanel` already covered filtering, so this covers the other
 half of the note: what selecting someone actually gets you.
 
+### How the app categories sit
+
+Each person's categories ring their bubble: the app icon is a hexagon of dots
+around an empty centre, and here the person's face *is* that centre. Index 0 at
+the upper-right vertex, proceeding clockwise, using the same
+`SharedVisionsBrand.hexagonVertex` geometry as the mark.
+
+The face and its ring share **one** attachment. That keeps the ring radius
+expressed in points relative to the face — no points-to-metres conversion to
+get wrong — and costs one attachment per person rather than two, which is forty
+fewer entities across the dome.
+
+Ring radius is `faceDiameter * 0.95`. The face renders at `headshotScale` (0.78)
+of the water sphere's diameter, so the glass edge sits near `70 / 0.78 / 2` ≈
+45pt in the attachment's own coordinates; a 66.5pt radius puts the dots just
+outside the sphere rather than embedded in it.
+
+A seventh category would start a second, wider concentric loop outside the
+first. It cannot happen today — `AppTag` only has six cases — but the code
+handles it.
+
+Not done: the app icon joins its dots with hexagon edges, and the ring around a
+face currently has none. Adding a faint stroke on the same path would make the
+motif unmistakable, and it would clear the sphere since the ring radius already
+exceeds the glass. One line in `AppBubbleRing` if wanted.
+
 ### How filtering reads
 
 Filtered-out people **dim rather than disappear**. They fade to
