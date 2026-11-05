@@ -77,12 +77,12 @@ fileprivate enum AppTag: String, CaseIterable, Identifiable {
 
     var tint: Color {
         switch self {
-        case .design: return .purple
-        case .code: return .blue
-        case .video: return .pink
-        case .photo: return .teal
-        case .audio: return .orange
-        case .model: return .green
+        case .design: SharedVisionsBrand.orchid
+        case .code: SharedVisionsBrand.blue
+        case .video: SharedVisionsBrand.rose
+        case .photo: SharedVisionsBrand.aqua
+        case .audio: SharedVisionsBrand.sand
+        case .model: SharedVisionsBrand.spring
         }
     }
 }
@@ -92,7 +92,7 @@ fileprivate struct Person: Identifiable {
     let name: String
     let role: Role
     let headshot: String
-    let accentColor: UIColor
+    let accentColor: Color
     let apps: [AppTag]
 }
 
@@ -116,14 +116,18 @@ fileprivate let mockPeople: [Person] = {
         "Thandiwe Mokoena", "Linnea Soren", "Arjun Kapadia", "Beatrix Nagy"
     ]
 
-    let accentColors: [UIColor] = [.systemBlue, .systemGreen, .systemPurple, .systemOrange, .systemPink, .systemTeal, .systemYellow]
+    let accentColors = SharedVisionsBrand.personAccents
     let appPool = AppTag.allCases
 
     return names.enumerated().map { index, name in
-        // One to three apps per person, picked deterministically so the dome
-        // looks the same on every launch and screenshots stay comparable
-        // across review rounds.
-        let appCount = 1 + (index % 3)
+        // Four to six apps per person. The lower bound matters: the bubbles
+        // sit on the app icon's hexagon, and below about four dots the shape
+        // reads as a short arc up the right-hand side rather than a hexagon,
+        // so the motif is lost. Six fills the ring exactly.
+        //
+        // Picked deterministically so the dome looks the same on every launch
+        // and screenshots stay comparable across review rounds.
+        let appCount = 4 + (index % 3)
         let apps = (0..<appCount).map { offset in
             appPool[(index * 2 + offset) % appPool.count]
         }
@@ -439,8 +443,11 @@ struct Concept012: View {
             // Scale raised after the first device pass. At 0.5 these rendered
             // as small coloured dots — which is precisely what the workshop
             // asked to move away from — and the symbol inside was illegible.
-            // Dropped slightly further below the sphere to match.
-            cluster.position = SIMD3<Float>(0, -0.068, 0)
+            //
+            // Dropped further than the old single row needed: a hexagon ring
+            // is roughly twice as tall as the row it replaced, so the cluster
+            // has to clear the sphere by more. Worth confirming on device.
+            cluster.position = SIMD3<Float>(0, -0.098, 0)
             cluster.scale = SIMD3<Float>(repeating: 0.85)
             orb.addChild(cluster)
         }
@@ -475,7 +482,9 @@ struct Concept012: View {
             // inactive, which is worse than hiding them was.
             setInputEnabled(matchesFilter, on: orb)
 
-            orb.scale = SIMD3<Float>(repeating: orbScale)
+            // The active person swells slightly as well as gaining colour, so
+            // focus reads from across the dome and not only up close.
+            orb.scale = SIMD3<Float>(repeating: orbScale * (isActive ? 1.28 : 1))
             // Re-aim from the new spot after a field-of-view change. This also
             // reassigns position, which the float controller picks back up on
             // the next frame.
@@ -531,7 +540,9 @@ struct Concept012: View {
     @MainActor
     private func applyGlow(to orb: Entity, person: Person, isActive: Bool, matchesFilter: Bool) {
         guard let light = orb.findEntity(named: "PointLight") else { return }
-        let color = isActive ? person.accentColor : UIColor.white
+        // `PointLightComponent` needs a `CGColor`, so the brand `Color` is
+        // bridged through `UIColor` here.
+        let color = isActive ? UIColor(person.accentColor) : UIColor.white
 
         // The backlight has to track the fade. `OpacityComponent` does not
         // attenuate light a `PointLight` casts, so a filtered-out orb left at
@@ -793,14 +804,18 @@ fileprivate struct PersonaPortrait: View {
             // a white wall — so a dark disc sits directly behind the head to
             // give the cut-out something to separate from.
             Circle()
-                .fill(.black.opacity(isSelected ? 0.45 : 0.32))
+                .fill(.black.opacity(isSelected ? 0.5 : 0.34))
                 .blur(radius: diameter * 0.1)
                 .frame(width: diameter * 0.9, height: diameter * 0.9)
 
             // Stands in for light scattering through the water behind the
-            // head, and reads as a rim glow around the darker backing.
+            // head, and reads as a rim glow around the darker backing. Only
+            // the active face gets the accent; inactive ones take a neutral
+            // grey so nothing competes with the person in focus.
             Circle()
-                .fill(Color(person.accentColor).opacity(isSelected ? 0.55 : 0.34))
+                .fill(isSelected
+                      ? person.accentColor.opacity(0.62)
+                      : SharedVisionsBrand.mist.opacity(0.2))
                 .blur(radius: diameter * 0.17)
                 .frame(width: diameter, height: diameter)
 
@@ -812,7 +827,7 @@ fileprivate struct PersonaPortrait: View {
                     .shadow(color: .black.opacity(0.4), radius: diameter * 0.07, y: diameter * 0.03)
                     // Toward the viewer, so the head sits proud of the
                     // backing disc rather than coplanar with it.
-                    .offset(z: isSelected ? diameter * 0.22 : diameter * 0.13)
+                    .offset(z: isSelected ? diameter * 0.26 : diameter * 0.13)
             } else {
                 // Until the lift finishes — or if it fails on a given photo —
                 // fall back to the circular crop so the dome is never empty.
@@ -820,15 +835,16 @@ fileprivate struct PersonaPortrait: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: diameter, height: diameter)
-                    .clipShape(Circle())
+                    .clipShape(.circle)
                     .offset(z: diameter * 0.08)
             }
         }
-        // No grayscale on faces that pass the filter. Filter state is carried
-        // entirely by `OpacityComponent` on the orb now, so desaturating here
-        // only cost legibility.
-        .saturation(isSelected ? 1.2 : 1)
-        .animation(.easeInOut(duration: 0.25), value: isSelected)
+        // Colour is the signal for focus: the active face is full colour and
+        // slightly over-saturated, everyone else is monochrome. Filter state
+        // is carried separately, by `OpacityComponent` on the orb.
+        .grayscale(isSelected ? 0 : 1)
+        .saturation(isSelected ? 1.25 : 1)
+        .animation(.easeInOut(duration: 0.28), value: isSelected)
     }
 }
 
@@ -841,16 +857,22 @@ fileprivate struct PersonAttachment: View {
         PersonaPortrait(person: person, portrait: portrait, isSelected: isSelected)
             .overlay(
                 Circle()
-                    .stroke(Color(person.accentColor), lineWidth: isSelected ? 3 : 0)
+                    .stroke(person.accentColor, lineWidth: isSelected ? 3 : 0)
                     .frame(width: 70, height: 70)
             )
             .accessibilityLabel("\(person.name), \(person.role.rawValue)")
     }
 }
 
-/// The flat app bubbles that hang under each face, replacing the colour dots
-/// in the comp. Rendered as one attachment per person rather than one per app
-/// so a forty-person roster costs forty attachments, not around ninety.
+/// The app bubbles that hang under each face.
+///
+/// Laid out on the same hexagon as the app icon: index 0 at the upper-right
+/// vertex, proceeding clockwise, so the motif in the mark and the motif around
+/// a person are literally the same geometry. A seventh app starts a second
+/// hexagon below the first rather than crowding the ring.
+///
+/// Rendered as one attachment per person rather than one per app so a
+/// forty-person roster costs forty attachments, not around ninety.
 fileprivate struct AppBubbleCluster: View {
     let apps: [AppTag]
     let isEmphasized: Bool
@@ -859,18 +881,45 @@ fileprivate struct AppBubbleCluster: View {
         "apps-\(person.id)"
     }
 
+    private var dotDiameter: Double { isEmphasized ? 30 : 21 }
+    private var ringRadius: Double { dotDiameter * 1.35 }
+    private var ringExtent: Double { ringRadius * 2 + dotDiameter }
+
+    private var ringCount: Int {
+        max(1, Int((Double(apps.count) / 6).rounded(.up)))
+    }
+
     var body: some View {
-        HStack(spacing: 7) {
-            ForEach(apps) { app in
-                Image(systemName: app.symbol)
-                    .font(.system(size: isEmphasized ? 26 : 19, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: isEmphasized ? 52 : 38, height: isEmphasized ? 52 : 38)
-                    .background(app.tint.opacity(0.92), in: Circle())
-                    .accessibilityLabel(app.label)
+        VStack(spacing: dotDiameter * 0.28) {
+            ForEach(0..<ringCount, id: \.self) { ring in
+                hexRing(ring)
             }
         }
         .animation(.easeInOut(duration: 0.25), value: isEmphasized)
+    }
+
+    /// One hexagon's worth of apps. Ranges are fixed for a given person, so
+    /// index identity is safe here.
+    private func hexRing(_ ring: Int) -> some View {
+        let start = ring * 6
+        let end = min(start + 6, apps.count)
+
+        return ZStack {
+            ForEach(start..<end, id: \.self) { index in
+                bubble(apps[index])
+                    .offset(SharedVisionsBrand.hexagonVertex(index - start, radius: ringRadius))
+            }
+        }
+        .frame(width: ringExtent, height: ringExtent)
+    }
+
+    private func bubble(_ app: AppTag) -> some View {
+        Image(systemName: app.symbol)
+            .font(.system(size: dotDiameter * 0.52, weight: .semibold))
+            .foregroundStyle(SharedVisionsBrand.white)
+            .frame(width: dotDiameter, height: dotDiameter)
+            .background(app.tint.opacity(0.95), in: .circle)
+            .accessibilityLabel(app.label)
     }
 }
 
@@ -900,21 +949,27 @@ fileprivate struct DocumentaryPanel: View {
                 UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18)
             )
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Watch the Shared Visions Documentary")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
-                if let person {
-                    Text("\(person.name) · \(person.role.rawValue)")
-                        .font(.subheadline)
-                        // Explicit white rather than `.secondary`, which
-                        // renders near-invisible over the black video panel.
-                        .foregroundStyle(.white.opacity(0.82))
+            HStack(alignment: .top, spacing: 14) {
+                // No ground behind the mark here — the video panel is already
+                // the near-black the icon sits on.
+                SharedVisionsMark(diameter: 40, showsGround: false)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Watch the Shared Visions Documentary")
+                        .font(SharedVisionsFont.semiBold(.title3))
+                        .foregroundStyle(SharedVisionsBrand.white)
+                    if let person {
+                        Text("\(person.name) · \(person.role.rawValue)")
+                            .font(SharedVisionsFont.medium(.subheadline))
+                            // Explicit white rather than `.secondary`, which
+                            // renders near-invisible over the black video.
+                            .foregroundStyle(SharedVisionsBrand.white.opacity(0.82))
+                    }
                 }
             }
             // Extra trailing room so a long name never runs under the close
             // button in the opposite corner.
-            .padding(.init(top: 22, leading: 24, bottom: 20, trailing: 64))
+            .padding(.init(top: 20, leading: 22, bottom: 20, trailing: 64))
 
             Image(systemName: "play.circle.fill")
                 .font(.system(size: min(width, height) * 0.22))
@@ -947,9 +1002,9 @@ fileprivate struct InterviewUniversePanel: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Interview Universe")
-                        .font(.title3.weight(.semibold))
+                        .font(SharedVisionsFont.semiBold(.title3))
                     Text("Filter to bring the relevant interviews forward")
-                        .font(.caption)
+                        .font(SharedVisionsFont.light(.caption))
                         .foregroundStyle(.secondary)
                 }
 
@@ -994,12 +1049,12 @@ fileprivate struct RoleFilterChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.caption)
+                .font(SharedVisionsFont.medium(.caption))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(isSelected ? Color.accentColor : Color.clear)
-                .foregroundStyle(isSelected ? Color.white : Color.primary)
-                .clipShape(Capsule())
+                .background(isSelected ? SharedVisionsBrand.blue : Color.clear)
+                .foregroundStyle(isSelected ? SharedVisionsBrand.white : Color.primary)
+                .clipShape(.capsule)
         }
         .buttonStyle(.plain)
     }
@@ -1033,9 +1088,9 @@ fileprivate struct PersonSelectionOverlay: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(person.name)
-                        .font(.title2.weight(.semibold))
+                        .font(SharedVisionsFont.semiBold(.title2))
                     Text(person.role.rawValue)
-                        .font(.callout)
+                        .font(SharedVisionsFont.medium(.callout))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.top, 8)
@@ -1051,17 +1106,25 @@ fileprivate struct PersonSelectionOverlay: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Appears in")
-                    .font(.caption)
+                    .font(SharedVisionsFont.light(.caption))
                     .foregroundStyle(.secondary)
 
-                HStack(spacing: 10) {
-                    ForEach(person.apps) { app in
-                        Label(app.label, systemImage: app.symbol)
-                            .font(.caption)
-                            .labelStyle(.titleAndIcon)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(app.tint.opacity(0.28), in: Capsule())
+                // Wrapped three to a row. People now carry up to six apps so
+                // the dome's hexagon motif reads, and six of these capsules
+                // in one row would overflow the panel's 420pt width.
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(stride(from: 0, to: person.apps.count, by: 3)), id: \.self) { start in
+                        HStack(spacing: 10) {
+                            ForEach(start..<min(start + 3, person.apps.count), id: \.self) { index in
+                                let app = person.apps[index]
+                                Label(app.label, systemImage: app.symbol)
+                                    .font(SharedVisionsFont.medium(.caption))
+                                    .labelStyle(.titleAndIcon)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(app.tint.opacity(0.28), in: .capsule)
+                            }
+                        }
                     }
                 }
             }

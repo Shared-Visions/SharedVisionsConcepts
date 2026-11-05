@@ -96,10 +96,40 @@ fourth slider to `TuningPanel` is straightforward.
 
 ## Open items
 
+**Two style-guide swatches were mislabelled.** A dusty pink labelled `349CF2`
+(a mid blue) and a light green labelled `3CD3FE` (a cyan). Per the designers the
+swatches are right and the labels wrong, so both were recovered from the guide's
+own pixels: the guide is a glass panel and renders every swatch lighter than
+its true value, so fitting that shift across the seven swatches whose label and
+appearance *do* agree gave `rendered = 0.778 x true + 51.9` (R² = 0.974), and
+inverting it yields `#E17A94` and `#9CEE8C`. Accurate to a few units, not exact
+— worth replacing with the designers' real hex.
+
+**The logo is drawn, not an asset.** `SharedVisionsMark` draws the hexagon from
+the same `hexagonVertex` geometry the app bubbles use, since there is no logo
+artwork in the repo. It stays sharp at any size and needs no asset, but it is a
+reconstruction from the style guide image — swap in the official artwork when
+available; call sites take a diameter and nothing else.
+
 **Real app icons.** `AppTag.symbol` uses SF Symbols because there is no app-icon
 artwork in the asset catalogue. One line per case once the images exist. The
 bubbles are now large enough for an icon to read, which they were not on the
 first device pass.
+
+## Typography — Inter is bundled
+
+Inter 4.1, three static instances, under the SIL Open Font License. Files and
+the licence are in `SharedVisionsConcepts01/Resources/Fonts/`, listed in
+Info.plist under `UIAppFonts`, and reached through `SharedVisionsFont`.
+
+PostScript names were read off the files rather than assumed — `Inter-SemiBold`,
+`Inter-Medium`, `Inter-Light` — and verified to resolve through CoreText rather
+than fall back. A wrong name there makes `Font.custom` return the system face
+silently, which looks like "the font didn't apply" with no error anywhere.
+
+`SharedVisionsFont.isInterBundled` still exists; set it to `false` to flip the
+whole app back to system faces at matching weights, which is useful for
+comparing the two.
 
 **Deprecation warning in `TuningSlider`.** Around line 1069, `Text(...) + Text(...)`
 warns under iOS 26: "Use string interpolation on `Text` instead". Pre-existing in
