@@ -90,13 +90,44 @@ fileprivate struct ConstellationConnection {
 fileprivate final class LivingConstellationController {
     private let brandBlue = UIColor(red: 0.0, green: 145.0 / 255.0, blue: 1.0, alpha: 1.0)
 
-    /// Mid tier of the bolt, between the blue haze and the core. Brand aqua
-    /// (`77D6EE`), which also matches the cyan in the reference art.
+    /// Mid tier of the bolt. Brand aqua (`77D6EE`), which also matches the
+    /// cyan in the reference art.
     private let boltCyan = UIColor(red: 119.0 / 255.0, green: 214.0 / 255.0, blue: 238.0 / 255.0, alpha: 1.0)
 
-    /// Core of the bolt. Very slightly cyan rather than pure white so the
-    /// channel still reads as electric blue at distance instead of grey.
-    private let coreWhite = UIColor(red: 0.90, green: 0.98, blue: 1.0, alpha: 1.0)
+    /// Core of the bolt. Pulled further toward cyan and away from white: a
+    /// near-white core at this thickness blew out and flattened the channel
+    /// into a drawn line.
+    private let coreWhite = UIColor(red: 0.78, green: 0.94, blue: 1.0, alpha: 1.0)
+
+    /// Concentric tiers making up a channel's cross-section, widest first.
+    ///
+    /// Four nested cylinders with a graduated opacity ramp stand in for a
+    /// radial falloff. RealityKit gives no post-process bloom on visionOS and
+    /// no control over anti-aliasing, and an `UnlitMaterial` cylinder has a
+    /// hard geometric edge, so a ramp of nested tiers is the available way to
+    /// soften it. A soft-edged textured ribbon would do better and is the
+    /// real fix if this still reads as line art.
+    ///
+    /// Radii are in metres and chosen against the cluster's ~1.5m distance,
+    /// where one device pixel is about 0.00038m of radius: roughly 3px core,
+    /// 8px body, 16px outer, 35px haze.
+    private var boltTiers: [(radius: Float, opacity: Float, color: UIColor)] {
+        [
+            (0.0135, 0.10, brandBlue),
+            (0.0062, 0.17, brandBlue),
+            (0.0031, 0.30, boltCyan),
+            (0.0012, 0.68, coreWhite),
+        ]
+    }
+
+    /// Fork cross-section: body and core only, and thinner. Forks should read
+    /// as filaments beside the channel, and this keeps the entity count sane
+    /// now that a bolt can carry a dozen of them.
+    private var forkTiers: [(radius: Float, opacity: Float, color: UIColor)] {
+        [
+            (0.0020, 0.22, boltCyan),            (0.0008, 0.52, coreWhite),
+        ]
+    }
 
     private let root = Entity()
     private var built = false
@@ -106,7 +137,6 @@ fileprivate final class LivingConstellationController {
 
     /// Randomised once per controller — so once per entry into the space —
     /// and mixed into every bolt seed and every strike-selection decision.
-    ///
     /// Without this the whole sequence was byte-identical on every launch:
     /// the same dots lit in the same order with the same bolt shapes, because
     /// `ConstellationConnection.seed` and the wave offsets are all fixed.
@@ -117,6 +147,69 @@ fileprivate final class LivingConstellationController {
     /// `sin(Float(...))`, which loses precision once the argument gets large,
     /// so the salt stays in the same magnitude as the existing seeds.
     private let runSalt = Int.random(in: 0..<10_000)
+
+    // MARK: Audio
+
+    /// Dramatic swell under the whole intro, peaking as the title lands.
+    private var swell: AudioFileResource?
+    /// Spatialised crack, played from the bolt's own entity.
+    private var nearThunder: AudioFileResource?
+    private var farThunder: AudioFileResource?
+    /// Quiet looping weather bed under the storm.
+    private var stormBed: AudioFileResource?
+
+    /// Carries the non-positional audio. Ambient rather than spatial so the
+    /// swell sits around the viewer instead of coming from a point.
+    private let audioHost = Entity()
+
+    /// Throttle for thunder. A hero wave fires a dozen bolts inside a few
+    /// hundred milliseconds, and a crack on each is both mush and expensive.
+    private var lastThunder: Date = .distantPast
+
+    /// Loads the four clips.
+    ///
+    /// Spatialisation is not set here. On visionOS the resource no longer
+    /// carries an input mode — whether a sound is ambient or positional comes
+    /// from the audio component on the entity that plays it, so `audioHost`
+    /// gets `AmbientAudioComponent` and each bolt gets `SpatialAudioComponent`.
+    private func loadAudio() async {
+        // Non-fatal throughout: the sequence should run silently rather than
+        // fail outright if an asset is missing.
+        swell = try? await AudioFileResource(named: "intro-swell.wav")
+        stormBed = try? await AudioFileResource(
+            named: "storm-bed.wav",
+            configuration: .init(shouldLoop: true)
+        )
+        nearThunder = try? await AudioFileResource(named: "thunder-near.wav")
+        farThunder = try? await AudioFileResource(named: "thunder-far.wav")
+
+        audioHost.components.set(AmbientAudioComponent(gain: -6))
+        root.addChild(audioHost)
+    }
+
+    /// Starts the swell. Its plateau begins around 4.0s, which is close to
+    /// when the title reveals, so the arrival and the title land together.
+    private func startIntroAudio() {
+        if let swell {
+            audioHost.playAudio(swell)
+        }
+        if let stormBed {
+            let bed = audioHost.playAudio(stormBed)
+            bed.gain = -22
+        }
+    }
+
+    /// Plays a crack from the bolt itself, so the sound arrives from the
+    /// direction the viewer saw the flash.
+    private func playThunder(on bolt: Entity, near: Bool) {
+        guard let resource = near ? nearThunder : farThunder else { return }
+        guard Date.now.timeIntervalSince(lastThunder) > 0.11 else { return }
+        lastThunder = .now
+
+        bolt.components.set(SpatialAudioComponent(gain: near ? -9 : -17))
+        bolt.playAudio(resource)
+    }
+
     private var connections: [ConstellationConnection] = []
 
     func build(in content: inout RealityViewContent, onRevealTitle: @escaping @MainActor () -> Void) {
@@ -188,6 +281,8 @@ fileprivate final class LivingConstellationController {
     }
 
     private func runIntroSequence(onRevealTitle: @escaping @MainActor () -> Void) async {
+        await loadAudio()
+        startIntroAudio()
         await animateBreathingDots()
         await compressToBluePoints()
         await animateConnectionSequence()
@@ -393,9 +488,31 @@ fileprivate final class LivingConstellationController {
             // bolt leaves a glowing source rather than simply starting.
             addSourceFlash(at: connection.start, to: bolt)
             root.addChild(bolt)
+            // Branching strikes are the hero ones, so they get the near crack.
+            playThunder(on: bolt, near: includeBranch)
 
             // Hold the brightest frame just long enough to register.
             try? await Task.sleep(for: .milliseconds(Int.random(in: 28...46)))
+
+            // Re-strikes. A real channel fires several times down roughly the
+            // same path, each a little different — that flicker is as much of
+            // the organic feel as the geometry is, and a single static stroke
+            // is what makes one look drawn.
+            let restrikes = Int.random(in: 1...2)
+            for strike in 0..<restrikes {
+                let repeated = makeLightningBolt(
+                    for: connection,
+                    seed: seed &+ 5100 &+ strike * 71,
+                    includeBranch: includeBranch && strike == 0,
+                    intensity: 0.85
+                )
+                root.addChild(repeated)
+                bolt.components.set(OpacityComponent(opacity: 0.35))
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 22...34)))
+                repeated.removeFromParent()
+                bolt.components.set(OpacityComponent(opacity: 1))
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 14...24)))
+            }
 
             // Decay. Each step dims the whole bolt and kills more of its
             // segments, so the channel comes apart as it dies.
@@ -482,7 +599,7 @@ fileprivate final class LivingConstellationController {
             seed: seed,
             depth: depth
         )
-        addBoltSegments(points: points, to: bolt, intensity: intensity)
+        addBoltSegments(points: points, to: bolt, intensity: intensity, widthSeed: seed)
 
         if includeBranch {
             // Vary how heavily forked each strike is. A storm where every bolt
@@ -490,17 +607,18 @@ fileprivate final class LivingConstellationController {
             // the thing this whole pass is trying to avoid.
             let generations = hashUnit(seed: seed, step: 77) < 0.45 ? 2 : 1
 
-            for branch in boltBranches(
+            for (branchIndex, branch) in boltBranches(
                 along: points,
                 seed: seed,
                 generation: generations,
                 intensity: intensity
-            ) {
+            ).enumerated() {
                 addBoltSegments(
                     points: branch.points,
                     to: bolt,
                     intensity: branch.intensity,
-                    slim: true
+                    slim: true,
+                    widthSeed: seed &+ 7000 &+ branchIndex * 13
                 )
             }
         }
@@ -508,57 +626,49 @@ fileprivate final class LivingConstellationController {
         return bolt
     }
 
-    /// Draws a path as concentric tiers: a wide dim blue haze, a tighter cyan
-    /// body, and a thin bright core.
+    /// Draws a path as a tapering channel of nested tiers.
     ///
-    /// Radii matter more than opacity here, and that caught me out. The first
-    /// version used a 0.55mm core radius, which at the cluster's ~1.5m
-    /// distance subtends 0.042° — around half a pixel. A line covering half a
-    /// pixel averages with the black behind it and lands near 50% brightness
-    /// no matter what opacity it asks for, which is why a core specified at
-    /// 0.95 measured 131/255 in a capture. Stacking translucent tiers cannot
-    /// brighten a line that does not cover a pixel.
+    /// Two things here matter more than the tier radii, and their absence is
+    /// why earlier passes still read as line art:
     ///
-    /// These radii put the core near 0.15° (about 5 device pixels) and give
-    /// the haze enough width and strength to stand in for the bloom
-    /// RealityKit will not render for us.
+    /// **Taper.** A real channel is widest where it attaches and narrows
+    /// toward the tip. Every segment being the same width is the strongest
+    /// single cue that something was drawn rather than discharged.
     ///
-    /// `slim` thins the tiers for forks, so they read as filaments beside the
-    /// channel and the entity count stays sane now that a bolt can carry a
-    /// dozen of them.
+    /// **Per-segment variation.** Tapering uniformly still looks machined, so
+    /// each segment's width is jittered around the taper curve.
     private func addBoltSegments(
         points: [SIMD3<Float>],
         to parent: Entity,
         intensity: Float,
-        slim: Bool = false
+        slim: Bool = false,
+        widthSeed: Int = 0
     ) {
         guard points.count >= 2 else { return }
+
+        let tiers = slim ? forkTiers : boltTiers
+        let lastIndex = Float(max(points.count - 2, 1))
 
         for index in 0..<(points.count - 1) {
             let start = points[index]
             let end = points[index + 1]
 
-            if !slim {
+            let t = Float(index) / lastIndex
+            // Forks taper harder, so they thin to filaments rather than
+            // stopping abruptly.
+            let taper = 1 - (slim ? 0.68 : 0.60) * t
+            let jitter = 0.84 + hashUnit(seed: widthSeed, step: 500 + index) * 0.32
+            let width = taper * jitter
+
+            for tier in tiers {
                 parent.addChild(lineEntity(
-                    from: start, to: end,
-                    color: brandBlue, opacity: 0.20 * intensity, radius: 0.0160
+                    from: start,
+                    to: end,
+                    color: tier.color,
+                    opacity: tier.opacity * intensity,
+                    radius: tier.radius * width
                 ))
             }
-
-            parent.addChild(lineEntity(
-                from: start, to: end,
-                color: boltCyan,
-                opacity: (slim ? 0.42 : 0.55) * intensity,
-                radius: slim ? 0.0026 : 0.0060
-            ))
-            // Core is cyan-white rather than pure white so the colour survives
-            // at distance; a white core reads grey once it is this thin.
-            parent.addChild(lineEntity(
-                from: start, to: end,
-                color: coreWhite,
-                opacity: (slim ? 0.88 : 0.98) * intensity,
-                radius: slim ? 0.0009 : 0.0020
-            ))
         }
     }
 
