@@ -398,7 +398,10 @@ fileprivate final class LivingConstellationController {
 
             let slice = Array(pool[lower..<upper])
                 .shuffled()
-                .prefix(max(2, Int(Double(upper - lower) * Double.random(in: 0.45...0.70))))
+                // Fires most of each window. Density is turned up here
+                // rather than by adding waves, so the sequence does not get
+                // any longer than the pacing that was signed off.
+                .prefix(max(3, Int(Double(upper - lower) * Double.random(in: 0.68...0.92))))
 
             for (index, connection) in slice.enumerated() {
                 // Fork the nearer half richly; distant strikes read as
@@ -407,7 +410,7 @@ fileprivate final class LivingConstellationController {
                 spawnLightningBolt(
                     for: connection,
                     seed: connection.seed &+ runSalt &+ wave * 211 &+ index * 19,
-                    delayMilliseconds: Int.random(in: 0...30) + index * 16,
+                    delayMilliseconds: Int.random(in: 0...30) + index * 11,
                     includeBranch: isNear || Bool.random()
                 )
             }
@@ -1131,7 +1134,7 @@ fileprivate final class LivingConstellationController {
         // absent entirely rather than merely firing later than before.
         let participants = heroIndices
             .shuffled()
-            .prefix(max(4, Int(Double(heroIndices.count) * Double.random(in: 0.5...0.75))))
+            .prefix(max(4, Int(Double(heroIndices.count) * Double.random(in: 0.66...0.88))))
 
         var seen = Set<Int>()
         var result: [ConstellationConnection] = []
@@ -1183,7 +1186,7 @@ fileprivate final class LivingConstellationController {
             if isHero { continue }
 
             // A different ~30% of the periphery participates on each run.
-            guard Double.random(in: 0..<1) < 0.30 else { continue }
+            guard Double.random(in: 0..<1) < 0.44 else { continue }
 
             // Same reasoning as the hero cluster: pick among the nearest few
             // so peripheral links are not identical run to run either.
