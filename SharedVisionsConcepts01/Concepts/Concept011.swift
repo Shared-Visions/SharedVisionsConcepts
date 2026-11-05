@@ -90,9 +90,13 @@ fileprivate struct ConstellationConnection {
 fileprivate final class LivingConstellationController {
     private let brandBlue = UIColor(red: 0.0, green: 145.0 / 255.0, blue: 1.0, alpha: 1.0)
 
-    /// Mid tier of the bolt, between the blue haze and the white core. Brand
-    /// aqua (`77D6EE`), which also matches the cyan in the reference art.
+    /// Mid tier of the bolt, between the blue haze and the core. Brand aqua
+    /// (`77D6EE`), which also matches the cyan in the reference art.
     private let boltCyan = UIColor(red: 119.0 / 255.0, green: 214.0 / 255.0, blue: 238.0 / 255.0, alpha: 1.0)
+
+    /// Core of the bolt. Very slightly cyan rather than pure white so the
+    /// channel still reads as electric blue at distance instead of grey.
+    private let coreWhite = UIColor(red: 0.90, green: 0.98, blue: 1.0, alpha: 1.0)
 
     private let root = Entity()
     private var built = false
@@ -192,7 +196,10 @@ fileprivate final class LivingConstellationController {
     }
 
     private func animateBreathingDots() async {
-        let steps = 14
+        // Step count and interval both trimmed — this is the pre-roll before
+        // anything happens, and at 14 steps of 90ms it ran 2.6 seconds before
+        // the first bolt.
+        let steps = 10
 
         for step in 0...steps {
             let t = Float(step) / Float(steps)
@@ -204,7 +211,7 @@ fileprivate final class LivingConstellationController {
                 dotScale: 0.55 + 0.70 * eased,
                 haloScale: 1.0
             )
-            try? await Task.sleep(for: .milliseconds(90))
+            try? await Task.sleep(for: .milliseconds(70))
         }
 
         for step in 0...steps {
@@ -217,12 +224,12 @@ fileprivate final class LivingConstellationController {
                 dotScale: 1.25 - 0.38 * eased,
                 haloScale: 1.0
             )
-            try? await Task.sleep(for: .milliseconds(85))
+            try? await Task.sleep(for: .milliseconds(62))
         }
     }
 
     private func compressToBluePoints() async {
-        let steps = 12
+        let steps = 10
         for step in 0...steps {
             let t = Float(step) / Float(steps)
             let eased = easeInOut(t)
@@ -234,7 +241,7 @@ fileprivate final class LivingConstellationController {
                 dotScale: 0.88 - 0.38 * eased,
                 haloScale: 0.95 + 0.10 * eased
             )
-            try? await Task.sleep(for: .milliseconds(68))
+            try? await Task.sleep(for: .milliseconds(55))
         }
     }
 
@@ -248,11 +255,9 @@ fileprivate final class LivingConstellationController {
 
         guard !hero.isEmpty else { return }
 
-        // Five hero waves. Each lights a different random share of the central
-        // cluster rather than all of it — lighting every connection on every
-        // wave is what made the sequence read as one animation on loop
-        // instead of a storm.
-        for wave in 0..<5 {
+        // Four hero waves, down from five. Each lights a different random
+        // share of the cluster.
+        for wave in 0..<4 {
             let waveHero = hero
                 .shuffled()
                 .prefix(max(2, Int(Float(hero.count) * Float.random(in: 0.5...0.85))))
@@ -261,25 +266,25 @@ fileprivate final class LivingConstellationController {
                 spawnLightningBolt(
                     for: connection,
                     seed: connection.seed &+ runSalt &+ wave * 211 &+ index * 19,
-                    delayMilliseconds: Int.random(in: 0...40) + index * 24,
+                    delayMilliseconds: Int.random(in: 0...26) + index * 14,
                     includeBranch: true
                 )
             }
 
             // Peripheral strikes split across waves so the room stays alive
             // between hero flashes instead of everything firing at once.
-            let ambientSlice = ambient.shuffled().prefix(max(1, ambient.count / 5))
+            let ambientSlice = ambient.shuffled().prefix(max(1, ambient.count / 4))
 
             for (index, connection) in ambientSlice.enumerated() {
                 spawnLightningBolt(
                     for: connection,
                     seed: connection.seed &+ runSalt &+ wave * 307 &+ index * 23,
-                    delayMilliseconds: 120 + index * 42 + Int.random(in: 0...60),
+                    delayMilliseconds: 70 + index * 26 + Int.random(in: 0...40),
                     includeBranch: Bool.random()
                 )
             }
 
-            try? await Task.sleep(for: .milliseconds(Int.random(in: 360...470)))
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 240...320)))
         }
 
         // One last dense front flash immediately before the title fades in.
@@ -287,12 +292,12 @@ fileprivate final class LivingConstellationController {
             spawnLightningBolt(
                 for: connection,
                 seed: connection.seed &+ runSalt &+ 9001 &+ index * 31,
-                delayMilliseconds: index * 18,
+                delayMilliseconds: index * 10,
                 includeBranch: true
             )
         }
 
-        try? await Task.sleep(for: .milliseconds(260))
+        try? await Task.sleep(for: .milliseconds(180))
     }
 
     private func startIdleBlueBreathing() {
@@ -404,18 +409,19 @@ fileprivate final class LivingConstellationController {
         }
     }
 
-    /// A bright point with a soft halo where a bolt attaches.
+    /// A bright point with a soft halo where a bolt attaches. Scaled to the
+    /// thickened channel so it reads as the source rather than a stray dot.
     private func addSourceFlash(at position: SIMD3<Float>, to parent: Entity) {
         let core = ModelEntity(
-            mesh: .generateSphere(radius: 0.0055),
-            materials: [material(color: .white, opacity: 0.9)]
+            mesh: .generateSphere(radius: 0.011),
+            materials: [material(color: coreWhite, opacity: 0.95)]
         )
         core.position = position
         parent.addChild(core)
 
         let halo = ModelEntity(
-            mesh: .generateSphere(radius: 0.019),
-            materials: [material(color: brandBlue, opacity: 0.12)]
+            mesh: .generateSphere(radius: 0.040),
+            materials: [material(color: brandBlue, opacity: 0.22)]
         )
         halo.position = position
         parent.addChild(halo)
@@ -503,16 +509,23 @@ fileprivate final class LivingConstellationController {
     }
 
     /// Draws a path as concentric tiers: a wide dim blue haze, a tighter cyan
-    /// body, and a thin near-opaque white core.
+    /// body, and a thin bright core.
     ///
-    /// Stacking translucent emissive layers approximates the additive bloom of
-    /// a real bolt, which is what sells it as light rather than as geometry.
-    /// An earlier two-tier version ran the core at 0.10 opacity, so the
-    /// brightest part of a lightning strike was nearly transparent.
+    /// Radii matter more than opacity here, and that caught me out. The first
+    /// version used a 0.55mm core radius, which at the cluster's ~1.5m
+    /// distance subtends 0.042° — around half a pixel. A line covering half a
+    /// pixel averages with the black behind it and lands near 50% brightness
+    /// no matter what opacity it asks for, which is why a core specified at
+    /// 0.95 measured 131/255 in a capture. Stacking translucent tiers cannot
+    /// brighten a line that does not cover a pixel.
     ///
-    /// `slim` drops the haze tier and thins the rest, for forks. They should
-    /// read as fine filaments beside the channel, and it keeps the entity
-    /// count sane now that a bolt can carry a dozen of them.
+    /// These radii put the core near 0.15° (about 5 device pixels) and give
+    /// the haze enough width and strength to stand in for the bloom
+    /// RealityKit will not render for us.
+    ///
+    /// `slim` thins the tiers for forks, so they read as filaments beside the
+    /// channel and the entity count stays sane now that a bolt can carry a
+    /// dozen of them.
     private func addBoltSegments(
         points: [SIMD3<Float>],
         to parent: Entity,
@@ -528,21 +541,23 @@ fileprivate final class LivingConstellationController {
             if !slim {
                 parent.addChild(lineEntity(
                     from: start, to: end,
-                    color: brandBlue, opacity: 0.085 * intensity, radius: 0.0050
+                    color: brandBlue, opacity: 0.20 * intensity, radius: 0.0160
                 ))
             }
 
             parent.addChild(lineEntity(
                 from: start, to: end,
                 color: boltCyan,
-                opacity: (slim ? 0.24 : 0.30) * intensity,
-                radius: slim ? 0.0009 : 0.0017
+                opacity: (slim ? 0.42 : 0.55) * intensity,
+                radius: slim ? 0.0026 : 0.0060
             ))
+            // Core is cyan-white rather than pure white so the colour survives
+            // at distance; a white core reads grey once it is this thin.
             parent.addChild(lineEntity(
                 from: start, to: end,
-                color: .white,
-                opacity: (slim ? 0.80 : 0.95) * intensity,
-                radius: slim ? 0.00032 : 0.00055
+                color: coreWhite,
+                opacity: (slim ? 0.88 : 0.98) * intensity,
+                radius: slim ? 0.0009 : 0.0020
             ))
         }
     }
@@ -721,6 +736,21 @@ fileprivate final class LivingConstellationController {
         return (right, up)
     }
 
+    /// Connections through the dense central cluster, rebuilt fresh on every
+    /// run of the sequence.
+    ///
+    /// The earlier version was the reason the same dots lit every single time.
+    /// `heroIndices` is a geometric filter over fixed node positions, so the
+    /// candidate set never changed, and each node was paired with its *two
+    /// nearest* neighbours, so the pairs never changed either. Salting the
+    /// bolt seeds varied the shapes but not the endpoints, and shuffling the
+    /// draw order did nothing once the final flash fired every connection
+    /// anyway.
+    ///
+    /// Now a random share of the cluster takes part, and each participant
+    /// picks a random partner from among its nearest few rather than always
+    /// the closest. The cluster still sits in front of the viewer, so the
+    /// lightning stays where it will be seen.
     private func heroLightningConnections() -> [ConstellationConnection] {
         let eyeLevel = DomeLayout.defaultEyeLevel
 
@@ -731,37 +761,47 @@ fileprivate final class LivingConstellationController {
                 && abs(p.y - eyeLevel) < 0.90
         }
 
-        var seen = Set<String>()
+        guard heroIndices.count >= 4 else { return [] }
+
+        // Only part of the cluster participates, so a given dot is often
+        // absent entirely rather than merely firing later than before.
+        let participants = heroIndices
+            .shuffled()
+            .prefix(max(4, Int(Double(heroIndices.count) * Double.random(in: 0.5...0.75))))
+
+        var seen = Set<Int>()
         var result: [ConstellationConnection] = []
 
-        for index in heroIndices {
-            let nearest = heroIndices
+        for index in participants {
+            // Pick from among the nearest few rather than locking onto the
+            // closest, so the network rewires between runs.
+            let candidates = heroIndices
                 .filter { $0 != index }
-                .map { other in
-                    (other, simd_distance(nodePositions[index], nodePositions[other]))
-                }
-                .sorted { $0.1 < $1.1 }
-                .prefix(2)
+                .map { (other: $0, distance: simd_distance(nodePositions[index], nodePositions[$0])) }
+                .sorted { $0.distance < $1.distance }
+                .prefix(5)
 
-            for (other, _) in nearest {
-                let low = min(index, other)
-                let high = max(index, other)
-                let key = "\(low)-\(high)"
-                guard !seen.contains(key) else { continue }
-                seen.insert(key)
+            guard let chosen = candidates.randomElement() else { continue }
 
-                let start = nodePositions[index]
-                let end = nodePositions[other]
-                result.append(
-                    ConstellationConnection(
-                        start: start,
-                        end: end,
-                        midpoint: (start + end) / 2,
-                        length: simd_distance(start, end),
-                        seed: 10_000 + low * 101 + high
-                    )
+            let low = min(index, chosen.other)
+            let high = max(index, chosen.other)
+            // Pair key as an Int rather than a formatted string — this runs
+            // over every participant on every sequence.
+            let key = low * 100_000 + high
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+
+            let start = nodePositions[index]
+            let end = nodePositions[chosen.other]
+            result.append(
+                ConstellationConnection(
+                    start: start,
+                    end: end,
+                    midpoint: (start + end) / 2,
+                    length: simd_distance(start, end),
+                    seed: 10_000 &+ runSalt &+ low * 101 &+ high
                 )
-            }
+            )
         }
 
         return result
@@ -778,26 +818,26 @@ fileprivate final class LivingConstellationController {
                 && abs(p.y - eyeLevel) < 0.90
             if isHero { continue }
 
-            // Mixed with the run salt so a different ~30% of the periphery
-            // participates on each entry into the space.
-            guard hashUnit(seed: index + 1 + runSalt, step: 30_013) < 0.30 else { continue }
+            // A different ~30% of the periphery participates on each run.
+            guard Double.random(in: 0..<1) < 0.30 else { continue }
 
-            let nearest = nodePositions.indices
+            // Same reasoning as the hero cluster: pick among the nearest few
+            // so peripheral links are not identical run to run either.
+            let candidates = nodePositions.indices
                 .filter { $0 != index }
-                .map { other in
-                    (other, simd_distance(p, nodePositions[other]))
-                }
-                .min { $0.1 < $1.1 }
+                .map { (other: $0, distance: simd_distance(p, nodePositions[$0])) }
+                .sorted { $0.distance < $1.distance }
+                .prefix(4)
 
-            guard let (other, _) = nearest else { continue }
-            let end = nodePositions[other]
+            guard let chosen = candidates.randomElement() else { continue }
+            let end = nodePositions[chosen.other]
             result.append(
                 ConstellationConnection(
                     start: p,
                     end: end,
                     midpoint: (p + end) / 2,
                     length: simd_distance(p, end),
-                    seed: 20_000 + index * 131 + other
+                    seed: 20_000 &+ runSalt &+ index * 131 &+ chosen.other
                 )
             )
         }
