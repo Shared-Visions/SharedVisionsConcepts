@@ -261,6 +261,7 @@ fileprivate final class LivingConstellationController {
         guard !built else { return }
         built = true
         content.add(root)
+        enableBloom()
 
         let positions = DomeLayout.positions(
             count: 72,
@@ -273,14 +274,14 @@ fileprivate final class LivingConstellationController {
         for position in positions {
             let dot = ModelEntity(
                 mesh: .generateSphere(radius: 0.016),
-                materials: [material(color: .white, opacity: 0.0)]
+                materials: [glowingMaterial(color: .white, opacity: 0.0)]
             )
             dot.position = position
             root.addChild(dot)
 
             let halo = ModelEntity(
                 mesh: .generateSphere(radius: 0.042),
-                materials: [material(color: brandBlue, opacity: 0.0)]
+                materials: [glowingMaterial(color: brandBlue, opacity: 0.0)]
             )
             halo.position = position
             root.addChild(halo)
@@ -522,10 +523,14 @@ fileprivate final class LivingConstellationController {
         }
     }
 
+    /// Updates a node's material in place.
+    ///
+    /// Uses the non-tone-mapped variant: these are the dots and halos, the
+    /// things meant to bloom, and rebuilding them with the tone-mapped
+    /// material each frame would have quietly undone the exemption set at
+    /// construction.
     private func setMaterial(on entity: ModelEntity, color: UIColor, opacity: Float) {
-        guard var model = entity.model else { return }
-        model.materials = [material(color: color, opacity: opacity)]
-        entity.model = model
+        entity.model?.materials = [glowingMaterial(color: color, opacity: opacity)]
     }
 
 
@@ -1337,8 +1342,66 @@ fileprivate final class LivingConstellationController {
         return line
     }
 
+    // MARK: Bloom
+
+    /// Real screen-space bloom, new in RealityKit 27.
+    ///
+    /// This was not available when the bolts were first built, which is why
+    /// their glow is faked with wide, dim ribbon tiers standing in for a
+    /// bloom pass. Now the renderer can do it properly: bright regions are
+    /// extracted, blurred and composited back.
+    ///
+    /// Two constraints from the API:
+    ///
+    ///   - **visionOS only applies bloom inside an immersive space** — it has
+    ///     no effect in a shared space. This concept is `Space Full`, so it
+    ///     qualifies; a windowed concept would get nothing from this.
+    ///   - **Keep exactly one `BloomOptionsComponent` in the scene.** With
+    ///     several, the renderer picks one by proximity to the camera and
+    ///     depth in the hierarchy, which makes the result unpredictable.
+    ///
+    /// `scope` is `.unbounded`, so the whole image blooms rather than opting
+    /// in per-object. That is what suits a field of bright points on black:
+    /// the dots, the lightning cores and the title all want it, and nothing
+    /// in the scene wants to be excluded.
+    ///
+    /// Bloom is screen-space, so cost scales with how much of the screen the
+    /// bright regions cover, their brightness, and `blurRadius`. A dark space
+    /// with small bright points is close to the cheapest case there is.
+    private func enableBloom() {
+        // The project deploys below visionOS 27, so this is additive: on an
+        // older OS the scene simply renders without bloom, and the faked
+        // ribbon glow on the bolts still carries it.
+        guard #available(visionOS 27.0, *) else { return }
+
+        root.components.set(BloomComponent(scope: .unbounded))
+
+        var options = BloomOptionsComponent()
+        // Threshold above zero so the pitch-black surround and the dim idle
+        // dots stay clean — at zero, everything blooms however faint, and the
+        // whole scene turns milky.
+        options.threshold = 0.42
+        options.strength = 0.85
+        options.blurRadius = 0.035
+        root.components.set(options)
+    }
+
     private func material(color: UIColor, opacity: Float) -> UnlitMaterial {
         var material = UnlitMaterial()
+        material.color = .init(tint: color)
+        material.blending = .transparent(opacity: .init(floatLiteral: opacity))
+        return material
+    }
+
+    /// Like `material(color:opacity:)` but exempt from tone mapping, so the
+    /// value reaching the bloom threshold is the one that was asked for.
+    ///
+    /// Tone mapping compresses highlights toward white before bloom samples
+    /// the image, which pulls a nominally bright dot back under the
+    /// threshold and leaves it with no glow at all. Opting out keeps the dots
+    /// bright enough to actually bloom.
+    private func glowingMaterial(color: UIColor, opacity: Float) -> UnlitMaterial {
+        var material = UnlitMaterial(applyPostProcessToneMap: false)
         material.color = .init(tint: color)
         material.blending = .transparent(opacity: .init(floatLiteral: opacity))
         return material
