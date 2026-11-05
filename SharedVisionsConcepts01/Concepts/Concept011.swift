@@ -99,6 +99,20 @@ fileprivate final class LivingConstellationController {
     private var sequenceStarted = false
     private var nodes: [(dot: ModelEntity, halo: ModelEntity)] = []
     private var nodePositions: [SIMD3<Float>] = []
+
+    /// Randomised once per controller — so once per entry into the space —
+    /// and mixed into every bolt seed and every strike-selection decision.
+    ///
+    /// Without this the whole sequence was byte-identical on every launch:
+    /// the same dots lit in the same order with the same bolt shapes, because
+    /// `ConstellationConnection.seed` and the wave offsets are all fixed.
+    /// Determinism is useful for comparing screenshots across review rounds,
+    /// but here it made the intro read as a canned animation.
+    ///
+    /// Kept to four digits deliberately. `hashUnit` feeds its seed through
+    /// `sin(Float(...))`, which loses precision once the argument gets large,
+    /// so the salt stays in the same magnitude as the existing seeds.
+    private let runSalt = Int.random(in: 0..<10_000)
     private var connections: [ConstellationConnection] = []
 
     func build(in content: inout RealityViewContent, onRevealTitle: @escaping @MainActor () -> Void) {
@@ -225,50 +239,54 @@ fileprivate final class LivingConstellationController {
     }
 
     private func animateConnectionSequence() async {
-        // Make the lightning impossible to miss in-headset. The dense "hero"
-        // network is concentrated directly behind/around the title-card area.
-        // Every other dot independently gets a deterministic ~30% chance to
-        // throw one strike to its nearest neighbor during the sequence.
+        // The dense "hero" network is concentrated directly behind and around
+        // the title-card area so the lightning is impossible to miss
+        // in-headset. Every other dot gets a ~30% chance to throw one strike
+        // to its nearest neighbour during the sequence.
         let hero = heroLightningConnections()
         let ambient = ambientThirtyPercentConnections()
 
         guard !hero.isEmpty else { return }
 
-        // Five strong hero waves. Every wave lights the whole central cluster,
-        // with the peripheral 30% strikes layered in between.
+        // Five hero waves. Each lights a different random share of the central
+        // cluster rather than all of it — lighting every connection on every
+        // wave is what made the sequence read as one animation on loop
+        // instead of a storm.
         for wave in 0..<5 {
-            for (index, connection) in hero.enumerated() {
+            let waveHero = hero
+                .shuffled()
+                .prefix(max(2, Int(Float(hero.count) * Float.random(in: 0.5...0.85))))
+
+            for (index, connection) in waveHero.enumerated() {
                 spawnLightningBolt(
                     for: connection,
-                    seed: connection.seed + wave * 211 + index * 19,
-                    delayMilliseconds: index * 24,
+                    seed: connection.seed &+ runSalt &+ wave * 211 &+ index * 19,
+                    delayMilliseconds: Int.random(in: 0...40) + index * 24,
                     includeBranch: true
                 )
             }
 
-            let ambientSlice = ambient.enumerated().filter { pair in
-                // Split peripheral strikes across waves so the room feels alive
-                // instead of flashing everything at exactly the same instant.
-                pair.offset % 5 == wave
-            }
+            // Peripheral strikes split across waves so the room stays alive
+            // between hero flashes instead of everything firing at once.
+            let ambientSlice = ambient.shuffled().prefix(max(1, ambient.count / 5))
 
-            for (index, pair) in ambientSlice.enumerated() {
+            for (index, connection) in ambientSlice.enumerated() {
                 spawnLightningBolt(
-                    for: pair.element,
-                    seed: pair.element.seed + wave * 307 + index * 23,
-                    delayMilliseconds: 120 + index * 42,
-                    includeBranch: wave.isMultiple(of: 2)
+                    for: connection,
+                    seed: connection.seed &+ runSalt &+ wave * 307 &+ index * 23,
+                    delayMilliseconds: 120 + index * 42 + Int.random(in: 0...60),
+                    includeBranch: Bool.random()
                 )
             }
 
-            try? await Task.sleep(for: .milliseconds(420))
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 360...470)))
         }
 
         // One last dense front flash immediately before the title fades in.
-        for (index, connection) in hero.enumerated() {
+        for (index, connection) in hero.shuffled().enumerated() {
             spawnLightningBolt(
                 for: connection,
-                seed: connection.seed + 9001 + index * 31,
+                seed: connection.seed &+ runSalt &+ 9001 &+ index * 31,
                 delayMilliseconds: index * 18,
                 includeBranch: true
             )
@@ -355,9 +373,9 @@ fileprivate final class LivingConstellationController {
                 depth: 2
             )
             root.addChild(leader)
-            try? await Task.sleep(for: .milliseconds(26))
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 20...34)))
             leader.removeFromParent()
-            try? await Task.sleep(for: .milliseconds(20))
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 14...28)))
 
             // Return stroke: full subdivision, forks, full intensity.
             let bolt = makeLightningBolt(
@@ -366,21 +384,41 @@ fileprivate final class LivingConstellationController {
                 includeBranch: includeBranch,
                 intensity: 1
             )
+            // A hot point where the channel attaches. In the reference art the
+            // bolt leaves a glowing source rather than simply starting.
+            addSourceFlash(at: connection.start, to: bolt)
             root.addChild(bolt)
 
             // Hold the brightest frame just long enough to register.
-            try? await Task.sleep(for: .milliseconds(36))
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 28...46)))
 
             // Decay. Each step dims the whole bolt and kills more of its
             // segments, so the channel comes apart as it dies.
             for remaining in [0.7, 0.45, 0.22, 0.0] as [Float] {
                 bolt.components.set(OpacityComponent(opacity: remaining))
-                fragmentBolt(bolt, keeping: remaining, seed: seed + Int(remaining * 1000))
-                try? await Task.sleep(for: .milliseconds(28))
+                fragmentBolt(bolt, keeping: remaining, seed: seed &+ Int(remaining * 1000))
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 22...34)))
             }
 
             bolt.removeFromParent()
         }
+    }
+
+    /// A bright point with a soft halo where a bolt attaches.
+    private func addSourceFlash(at position: SIMD3<Float>, to parent: Entity) {
+        let core = ModelEntity(
+            mesh: .generateSphere(radius: 0.0055),
+            materials: [material(color: .white, opacity: 0.9)]
+        )
+        core.position = position
+        parent.addChild(core)
+
+        let halo = ModelEntity(
+            mesh: .generateSphere(radius: 0.019),
+            materials: [material(color: brandBlue, opacity: 0.12)]
+        )
+        halo.position = position
+        parent.addChild(halo)
     }
 
     /// Disables a growing random share of a bolt's segments so it breaks into
@@ -441,30 +479,45 @@ fileprivate final class LivingConstellationController {
         addBoltSegments(points: points, to: bolt, intensity: intensity)
 
         if includeBranch {
+            // Vary how heavily forked each strike is. A storm where every bolt
+            // carries the same fork tree reads as a repeated asset, which is
+            // the thing this whole pass is trying to avoid.
+            let generations = hashUnit(seed: seed, step: 77) < 0.45 ? 2 : 1
+
             for branch in boltBranches(
                 along: points,
                 seed: seed,
-                generation: 1,
+                generation: generations,
                 intensity: intensity
             ) {
-                addBoltSegments(points: branch.points, to: bolt, intensity: branch.intensity)
+                addBoltSegments(
+                    points: branch.points,
+                    to: bolt,
+                    intensity: branch.intensity,
+                    slim: true
+                )
             }
         }
 
         return bolt
     }
 
-    /// Draws a path as three concentric tiers: a wide dim blue haze, a tighter
-    /// cyan body, and a thin near-opaque white core.
+    /// Draws a path as concentric tiers: a wide dim blue haze, a tighter cyan
+    /// body, and a thin near-opaque white core.
     ///
     /// Stacking translucent emissive layers approximates the additive bloom of
     /// a real bolt, which is what sells it as light rather than as geometry.
-    /// The previous two-tier version ran the core at 0.10 opacity, so the
+    /// An earlier two-tier version ran the core at 0.10 opacity, so the
     /// brightest part of a lightning strike was nearly transparent.
+    ///
+    /// `slim` drops the haze tier and thins the rest, for forks. They should
+    /// read as fine filaments beside the channel, and it keeps the entity
+    /// count sane now that a bolt can carry a dozen of them.
     private func addBoltSegments(
         points: [SIMD3<Float>],
         to parent: Entity,
-        intensity: Float
+        intensity: Float,
+        slim: Bool = false
     ) {
         guard points.count >= 2 else { return }
 
@@ -472,17 +525,24 @@ fileprivate final class LivingConstellationController {
             let start = points[index]
             let end = points[index + 1]
 
+            if !slim {
+                parent.addChild(lineEntity(
+                    from: start, to: end,
+                    color: brandBlue, opacity: 0.085 * intensity, radius: 0.0050
+                ))
+            }
+
             parent.addChild(lineEntity(
                 from: start, to: end,
-                color: brandBlue, opacity: 0.085 * intensity, radius: 0.0050
+                color: boltCyan,
+                opacity: (slim ? 0.24 : 0.30) * intensity,
+                radius: slim ? 0.0009 : 0.0017
             ))
             parent.addChild(lineEntity(
                 from: start, to: end,
-                color: boltCyan, opacity: 0.30 * intensity, radius: 0.0017
-            ))
-            parent.addChild(lineEntity(
-                from: start, to: end,
-                color: .white, opacity: 0.95 * intensity, radius: 0.00055
+                color: .white,
+                opacity: (slim ? 0.80 : 0.95) * intensity,
+                radius: slim ? 0.00032 : 0.00055
             ))
         }
     }
@@ -578,9 +638,15 @@ fileprivate final class LivingConstellationController {
 
     /// Spawns forks at split points along a path.
     ///
-    /// `generation` bounds the recursion — forks of forks get expensive fast,
-    /// since every branch multiplies the segment count. One generation is
-    /// enough to read as forked; raise it if the dome can afford the entities.
+    /// Shaped from the reference art, where bolts carry many forks clustered
+    /// toward the source and thinning toward the tip, each trailing along the
+    /// parent's direction rather than stabbing out sideways. An earlier pass
+    /// with one or two near-perpendicular forks read as a lightning *symbol*
+    /// rather than a discharge.
+    ///
+    /// `generation` bounds the recursion, and fork count drops with it: every
+    /// branch multiplies the segment count, so an unbounded version is a
+    /// performance problem long before it is a visual one.
     private func boltBranches(
         along points: [SIMD3<Float>],
         seed: Int,
@@ -590,14 +656,18 @@ fileprivate final class LivingConstellationController {
         guard generation > 0, points.count >= 5 else { return [] }
 
         var result: [BoltBranch] = []
-        let forkCount = 1 + Int(hashUnit(seed: seed, step: 900) * 1.99)
+        let forkCount = generation >= 2
+            ? 3 + Int(hashUnit(seed: seed, step: 900) * 2.99)
+            : 1 + Int(hashUnit(seed: seed, step: 901) * 1.99)
 
         for fork in 0..<forkCount {
-            // Fork from the middle stretch. Forks hanging off the very ends
-            // read as mistakes rather than as branches.
             let interior = points.count - 2
             guard interior >= 2 else { continue }
-            let pick = 1 + Int(hashUnit(seed: seed, step: 910 + fork) * Float(interior - 1))
+
+            // Squaring the pick biases fork origins toward the start of the
+            // channel, which is where the reference bolts branch most.
+            let bias = hashUnit(seed: seed, step: 950 + fork)
+            let pick = 1 + Int(bias * bias * Float(interior - 1))
             let origin = points[pick]
 
             let ahead = points[min(pick + 1, points.count - 1)]
@@ -606,26 +676,34 @@ fileprivate final class LivingConstellationController {
             let forward = simd_normalize(ahead - behind)
             let basis = orthonormalBasis(for: forward)
 
-            // 25 to 55 degrees off the parent channel.
-            let angle = 0.44 + hashUnit(seed: seed, step: 920 + fork) * 0.52
+            // 15 to 45 degrees off the parent, so forks trail alongside the
+            // main channel instead of shooting out at right angles.
+            let angle = 0.26 + hashUnit(seed: seed, step: 920 + fork) * 0.52
             let side: Float = hashSigned(seed: seed, step: 930 + fork) >= 0 ? 1 : -1
-            let direction = simd_normalize(forward * cos(angle) + basis.right * side * sin(angle))
+            let roll = hashUnit(seed: seed, step: 960 + fork) * 2 * .pi
+            // Spread forks around the channel rather than confining them to
+            // one plane, which looks flat from the side in a 360 space.
+            let lateral = basis.right * cos(roll) + basis.up * sin(roll)
+            let direction = simd_normalize(forward * cos(angle) + lateral * side * sin(angle))
 
             let remaining = simd_distance(origin, points[points.count - 1])
-            let length = max(remaining * (0.3 + hashUnit(seed: seed, step: 940 + fork) * 0.25), 0.02)
+            // Each generation is a shorter stub than the last, so the fork
+            // tree tapers out instead of rivalling the channel it came from.
+            let reach = 0.22 + hashUnit(seed: seed, step: 940 + fork) * 0.24
+            let length = max(remaining * reach, 0.012)
 
             let childPoints = displacedBoltPath(
                 from: origin,
                 to: origin + direction * length,
-                seed: seed + 1700 + fork * 31,
-                depth: 2
+                seed: seed &+ 1700 &+ fork * 31,
+                depth: generation >= 2 ? 2 : 1
             )
-            let childIntensity = intensity * 0.55
+            let childIntensity = intensity * 0.5
 
             result.append(BoltBranch(points: childPoints, intensity: childIntensity))
             result.append(contentsOf: boltBranches(
                 along: childPoints,
-                seed: seed + 2300 + fork * 17,
+                seed: seed &+ 2300 &+ fork * 17,
                 generation: generation - 1,
                 intensity: childIntensity
             ))
@@ -700,9 +778,9 @@ fileprivate final class LivingConstellationController {
                 && abs(p.y - eyeLevel) < 0.90
             if isHero { continue }
 
-            // Deterministic probability so the effect is stable between runs,
-            // while still behaving like a 30% random strike chance per dot.
-            guard hashUnit(seed: index + 1, step: 30_013) < 0.30 else { continue }
+            // Mixed with the run salt so a different ~30% of the periphery
+            // participates on each entry into the space.
+            guard hashUnit(seed: index + 1 + runSalt, step: 30_013) < 0.30 else { continue }
 
             let nearest = nodePositions.indices
                 .filter { $0 != index }
