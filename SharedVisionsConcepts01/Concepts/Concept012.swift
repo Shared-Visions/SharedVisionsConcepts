@@ -43,6 +43,15 @@ fileprivate enum ChooserMode: String, CaseIterable, Identifiable {
 /// so these use SF Symbols as stand-ins and keep a per-app tint as the
 /// bubble fill; swapping in real icons later only means changing `symbol`
 /// to an `Image(_:)` asset lookup.
+/// The app categories a community member appears in.
+///
+/// Twelve rather than six, and that is a filtering decision rather than a
+/// content one. People carry four to six categories so the hexagon around
+/// their bubble actually reads as a hexagon — but across only six categories
+/// that meant any single filter kept about 83% of the roster, and three of
+/// the six matched everyone. A filter that excludes nobody is not a filter.
+/// Twelve brings it to roughly 40% per category while leaving the hexagon
+/// exactly as dense.
 fileprivate enum AppTag: String, CaseIterable, Identifiable {
     case design
     case code
@@ -50,31 +59,52 @@ fileprivate enum AppTag: String, CaseIterable, Identifiable {
     case photo
     case audio
     case model
+    case music
+    case education
+    case fitness
+    case retail
+    case gaming
+    case productivity
 
     var id: String { rawValue }
 
     var symbol: String {
         switch self {
-        case .design: return "pencil.and.ruler"
-        case .code: return "chevron.left.forwardslash.chevron.right"
-        case .video: return "video"
-        case .photo: return "camera"
-        case .audio: return "waveform"
-        case .model: return "cube"
+        case .design: "pencil.and.ruler"
+        case .code: "chevron.left.forwardslash.chevron.right"
+        case .video: "video"
+        case .photo: "camera"
+        case .audio: "waveform"
+        case .model: "cube"
+        case .music: "music.note"
+        case .education: "graduationcap"
+        case .fitness: "figure.run"
+        case .retail: "bag"
+        case .gaming: "gamecontroller"
+        case .productivity: "checklist"
         }
     }
 
     var label: String {
         switch self {
-        case .design: return "Design tools"
-        case .code: return "Development tools"
-        case .video: return "Video editing"
-        case .photo: return "Photography"
-        case .audio: return "Audio production"
-        case .model: return "3D modeling"
+        case .design: "Design tools"
+        case .code: "Development"
+        case .video: "Video editing"
+        case .photo: "Photography"
+        case .audio: "Audio production"
+        case .model: "3D modeling"
+        case .music: "Music"
+        case .education: "Education"
+        case .fitness: "Fitness"
+        case .retail: "Retail"
+        case .gaming: "Gaming"
+        case .productivity: "Productivity"
         }
     }
 
+    /// Brand accents, cycled. Twelve categories over a seven-colour palette
+    /// means some tints repeat — the ordering keeps repeats away from each
+    /// other, and the icon carries the distinction where colour cannot.
     var tint: Color {
         switch self {
         case .design: SharedVisionsBrand.orchid
@@ -83,6 +113,12 @@ fileprivate enum AppTag: String, CaseIterable, Identifiable {
         case .photo: SharedVisionsBrand.aqua
         case .audio: SharedVisionsBrand.sand
         case .model: SharedVisionsBrand.spring
+        case .music: SharedVisionsBrand.periwinkle
+        case .education: SharedVisionsBrand.aqua
+        case .fitness: SharedVisionsBrand.spring
+        case .retail: SharedVisionsBrand.sand
+        case .gaming: SharedVisionsBrand.orchid
+        case .productivity: SharedVisionsBrand.blue
         }
     }
 }
@@ -176,6 +212,10 @@ fileprivate struct DesignTuning {
 struct Concept012: View {
 
     @State private var selectedRole: Role? = nil
+    /// The Applications-mode counterpart to `selectedRole`. Kept separate
+    /// rather than unified into one enum so switching modes returns you to
+    /// the filter you last had in that mode.
+    @State private var selectedApp: AppTag? = nil
     @State private var mode: ChooserMode = .community
     @State private var selectedPersonID: Int? = nil
     @State private var isVideoVisible = true
@@ -244,9 +284,21 @@ struct Concept012: View {
         )
     }
 
+    /// Whichever filter the current mode owns.
+    ///
+    /// Applications filter by the categories a person appears in, exactly as
+    /// Community filters by role — previously the mode switch changed what the
+    /// bubbles emphasised but left the filter inert, so the Applications half
+    /// of the toggle did nothing you could act on.
     private var filteredPeople: [Person] {
-        guard let selectedRole else { return mockPeople }
-        return mockPeople.filter { $0.role == selectedRole }
+        switch mode {
+        case .community:
+            guard let selectedRole else { return mockPeople }
+            return mockPeople.filter { $0.role == selectedRole }
+        case .applications:
+            guard let selectedApp else { return mockPeople }
+            return mockPeople.filter { $0.apps.contains(selectedApp) }
+        }
     }
 
     private var selectedPerson: Person? {
@@ -286,7 +338,7 @@ struct Concept012: View {
             }
 
             Attachment(id: "universePanel") {
-                InterviewUniversePanel(mode: $mode, selectedRole: $selectedRole) {
+                InterviewUniversePanel(mode: $mode, selectedRole: $selectedRole, selectedApp: $selectedApp) {
                     isFilterPanelVisible = false
                 }
             }
@@ -334,6 +386,7 @@ struct Concept012: View {
         )
         .onChange(of: mode) { _, _ in selectedPersonID = nil }
         .onChange(of: selectedRole) { _, _ in selectedPersonID = nil }
+        .onChange(of: selectedApp) { _, _ in selectedPersonID = nil }
         .task { portraitStore.loadIfNeeded(for: mockPeople) }
         .persistentSystemOverlays(.hidden)
         .ornament(attachmentAnchor: .scene(.bottom)) {
@@ -1018,7 +1071,17 @@ fileprivate struct DocumentaryPanel: View {
 fileprivate struct InterviewUniversePanel: View {
     @Binding var mode: ChooserMode
     @Binding var selectedRole: Role?
+    @Binding var selectedApp: AppTag?
     let onClose: () -> Void
+
+    /// The subtitle names what the chips below will actually do, since the
+    /// same row of buttons means two different things depending on mode.
+    private var subtitle: String {
+        switch mode {
+        case .community: "Filter by what people do"
+        case .applications: "Filter by the apps they appear in"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1026,7 +1089,7 @@ fileprivate struct InterviewUniversePanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Interview Universe")
                         .font(SharedVisionsFont.semiBold(.title3))
-                    Text("Filter to bring the relevant interviews forward")
+                    Text(subtitle)
                         .font(SharedVisionsFont.light(.caption))
                         .foregroundStyle(.secondary)
                 }
@@ -1045,22 +1108,78 @@ fileprivate struct InterviewUniversePanel: View {
             }
             .pickerStyle(.segmented)
 
-            HStack(spacing: 8) {
-                RoleFilterChip(title: "All", isSelected: selectedRole == nil) {
-                    selectedRole = nil
+            // The chips belong to whichever mode is active. They used to be
+            // role-only and simply disabled in Applications mode, which left
+            // half the toggle with nothing behind it.
+            //
+            // Wrapped two rows deep because six app categories do not fit
+            // across the panel in one line the way four roles do.
+            switch mode {
+            case .community:
+                HStack(spacing: 8) {
+                    RoleFilterChip(title: "All", isSelected: selectedRole == nil) {
+                        selectedRole = nil
+                    }
+                    ForEach(Role.allCases) { role in
+                        RoleFilterChip(title: role.rawValue, isSelected: selectedRole == role) {
+                            // Tapping the active chip clears it, so the filter
+                            // can be undone without reaching for "All".
+                            selectedRole = selectedRole == role ? nil : role
+                        }
+                    }
                 }
-                ForEach(Role.allCases) { role in
-                    RoleFilterChip(title: role.rawValue, isSelected: selectedRole == role) {
-                        selectedRole = role
+
+            case .applications:
+                VStack(alignment: .leading, spacing: 8) {
+                    // Chunked three to a row; twelve categories will not fit
+                    // across the panel in one line the way four roles do.
+                    HStack(spacing: 8) {
+                        RoleFilterChip(title: "All", isSelected: selectedApp == nil) {
+                            selectedApp = nil
+                        }
+                        ForEach(Array(AppTag.allCases.prefix(2))) { app in
+                            AppFilterChip(app: app, isSelected: selectedApp == app) {
+                                selectedApp = selectedApp == app ? nil : app
+                            }
+                        }
+                    }
+                    ForEach(Array(stride(from: 2, to: AppTag.allCases.count, by: 3)), id: \.self) { start in
+                        HStack(spacing: 8) {
+                            ForEach(Array(AppTag.allCases[start..<min(start + 3, AppTag.allCases.count)])) { app in
+                                AppFilterChip(app: app, isSelected: selectedApp == app) {
+                                    selectedApp = selectedApp == app ? nil : app
+                                }
+                            }
+                        }
                     }
                 }
             }
-            .disabled(mode != .community)
-            .opacity(mode == .community ? 1 : 0.4)
         }
         .frame(width: 440, alignment: .leading)
         .padding(24)
         .glassBackgroundEffect()
+    }
+}
+
+/// Filter chip for an app category. Carries the category's icon and tint so
+/// the chips match the bubbles they filter, which role chips have no need to.
+fileprivate struct AppFilterChip: View {
+    let app: AppTag
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(app.label, systemImage: app.symbol)
+                .font(SharedVisionsFont.medium(.caption))
+                .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(isSelected ? app.tint : app.tint.opacity(0.22))
+                .foregroundStyle(isSelected ? SharedVisionsBrand.white : Color.primary)
+                .clipShape(.capsule)
+        }
+        .buttonStyle(.plain)
     }
 }
 
