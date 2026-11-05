@@ -18,6 +18,7 @@
 import SwiftUI
 import RealityKit
 import UIKit
+import CoreImage
 
 fileprivate let svBlue13 = UIColor(
     red: 0.0,
@@ -308,6 +309,14 @@ fileprivate final class Concept13UniverseController {
         let bubbleVisual: Entity
         let faceCarrier: Entity
         let portrait: ModelEntity
+        /// Full-colour and desaturated materials for the same portrait.
+        ///
+        /// Greying a texture cannot be done with a tint — multiplying by grey
+        /// darkens but does not desaturate — so both versions are built once
+        /// and swapped. Building them per frame would mean decoding an image
+        /// every update.
+        let portraitColor: UnlitMaterial
+        let portraitGray: UnlitMaterial
         let glassShell: ModelEntity
         let blueHalo: ModelEntity
         let goldHalo: ModelEntity
@@ -317,6 +326,9 @@ fileprivate final class Concept13UniverseController {
         let peripheralPosition: SIMD3<Float>
         let phaseOffset: Float
         var currentPosition: SIMD3<Float>
+        /// Which material the portrait is currently showing, so the per-frame
+        /// update can skip reassigning an unchanged one.
+        var isColorless: Bool = false
     }
 
     // Capture the user's starting head pose once, then freeze it. This gives us
@@ -395,7 +407,8 @@ fileprivate final class Concept13UniverseController {
             goldHalo.components.set(OpacityComponent(opacity: 0.0))
             faceCarrier.addChild(goldHalo)
 
-            let portrait = await makePortraitEntity(for: person)
+            let built = await makePortraitEntity(for: person)
+            let portrait = built.entity
             portrait.position = [0, 0, 0.000]
             faceCarrier.addChild(portrait)
 
@@ -426,6 +439,8 @@ fileprivate final class Concept13UniverseController {
                 bubbleVisual: bubbleVisual,
                 faceCarrier: faceCarrier,
                 portrait: portrait,
+                portraitColor: built.color,
+                portraitGray: built.gray,
                 glassShell: glassShell,
                 blueHalo: blueHalo,
                 goldHalo: goldHalo,
@@ -578,6 +593,24 @@ fileprivate final class Concept13UniverseController {
                 )
             )
 
+            // Colour marks membership of the current selection. Selecting a
+            // person brings their cohort with them and drains the colour from
+            // everyone else — before, the non-cohort orbs stayed fully
+            // saturated, so the cohort had to compete with them for attention
+            // rather than standing apart.
+            //
+            // Role filtering greys as well, so the two mechanisms agree
+            // instead of one dimming and the other desaturating.
+            let colorless =
+                (selectedPersonID != nil && !isSelected && !isSelectedCohort)
+                || dimmed
+
+            if state.isColorless != colorless {
+                state.portrait.model?.materials =
+                    [colorless ? state.portraitGray : state.portraitColor]
+                state.isColorless = colorless
+            }
+
             state.blueHalo.components.set(
                 OpacityComponent(
                     opacity:
@@ -659,53 +692,79 @@ fileprivate final class Concept13UniverseController {
 
     // MARK: - Portrait / bubble visuals
 
+    /// Desaturates an image for the "not part of this selection" state.
+    ///
+    /// `CIColorControls` at zero saturation, which preserves alpha. A grey
+    /// material tint cannot do this: multiplying a texture by grey darkens it
+    /// and leaves the hue intact.
+    private func desaturated(_ cgImage: CGImage) -> CGImage? {
+        let input = CIImage(cgImage: cgImage)
+        guard let filter = CIFilter(name: "CIColorControls") else { return nil }
+        filter.setValue(input, forKey: kCIInputImageKey)
+        filter.setValue(0.0, forKey: kCIInputSaturationKey)
+        // Lift brightness slightly; a flat desaturation of a dim portrait
+        // reads as "broken image" rather than "greyed out".
+        filter.setValue(0.04, forKey: kCIInputBrightnessKey)
+        guard let output = filter.outputImage else { return nil }
+        return CIContext().createCGImage(output, from: output.extent)
+    }
+
     private func makePortraitEntity(
         for person: Concept13Person
-    ) async -> ModelEntity {
+    ) async -> (entity: ModelEntity, color: UnlitMaterial, gray: UnlitMaterial) {
+        func fallback() -> (ModelEntity, UnlitMaterial, UnlitMaterial) {
+            let entity = missingPortraitEntity(label: person.portraitAssetName)
+            var plain = UnlitMaterial()
+            plain.color = .init(tint: .white)
+            return (entity, plain, plain)
+        }
+
         guard let image = UIImage(named: person.portraitAssetName),
               let cgImage = image.cgImage
         else {
             assertionFailure(
                 "Missing Concept 13 portrait asset: \(person.portraitAssetName)"
             )
-
-            return missingPortraitEntity(
-                label: person.portraitAssetName
-            )
+            let (e, c, g) = fallback()
+            return (e, c, g)
         }
 
         do {
             let texture = try await TextureResource(
                 image: cgImage,
                 withName: "concept13-\(person.portraitAssetName)",
-                options: TextureResource.CreateOptions(
-                    semantic: .color
-                )
+                options: TextureResource.CreateOptions(semantic: .color)
             )
 
-            var material = UnlitMaterial(texture: texture)
-            material.blending = .transparent(
-                opacity: .init(floatLiteral: 1.0)
-            )
+            var colorMaterial = UnlitMaterial(texture: texture)
+            colorMaterial.blending = .transparent(opacity: .init(floatLiteral: 1.0))
+
+            // Fall back to the colour material if desaturation fails, so a
+            // filter miss is never an invisible portrait.
+            var grayMaterial = colorMaterial
+            if let grayImage = desaturated(cgImage),
+               let grayTexture = try? await TextureResource(
+                   image: grayImage,
+                   withName: "concept13-gray-\(person.portraitAssetName)",
+                   options: TextureResource.CreateOptions(semantic: .color)
+               ) {
+                grayMaterial = UnlitMaterial(texture: grayTexture)
+                grayMaterial.blending = .transparent(opacity: .init(floatLiteral: 1.0))
+            }
 
             // 12.8 cm portrait inside a 16.6 cm shell graphic. This leaves a
             // visible but modest candy-coated glass margin around the person.
-            return ModelEntity(
-                mesh: .generatePlane(
-                    width: 0.128,
-                    height: 0.128,
-                    cornerRadius: 0
-                ),
-                materials: [material]
+            let entity = ModelEntity(
+                mesh: .generatePlane(width: 0.128, height: 0.128, cornerRadius: 0),
+                materials: [colorMaterial]
             )
+            return (entity, colorMaterial, grayMaterial)
         } catch {
             assertionFailure(
                 "Could not create Concept 13 portrait texture \(person.portraitAssetName): \(error)"
             )
-
-            return missingPortraitEntity(
-                label: person.portraitAssetName
-            )
+            let (e, c, g) = fallback()
+            return (e, c, g)
         }
     }
 
