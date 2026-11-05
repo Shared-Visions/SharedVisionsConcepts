@@ -90,16 +90,19 @@ enum SharedVisionsBrand {
 
 // MARK: - Typography
 
-/// The brand face is **Inter** (SemiBold / Medium / Light).
+/// The brand face is **Inter** (SemiBold / Medium / Light), bundled from the
+/// upstream Inter 4.1 release under the SIL Open Font License — see
+/// `Resources/Fonts/Inter-LICENSE.txt`.
 ///
-/// Inter is not a system face on visionOS and the font files are not in the
-/// repo yet, so every call falls back to the system face at the matching
-/// weight. Drop the Inter family into the bundle, list it under `UIAppFonts`
-/// in Info.plist, and flip `isInterBundled` — nothing else needs to change.
+/// The three static instances are listed in Info.plist under `UIAppFonts`, and
+/// their PostScript names (`Inter-SemiBold`, `Inter-Medium`, `Inter-Light`)
+/// were read off the files rather than assumed, since a wrong name makes
+/// `Font.custom` fall back to the system face silently.
 enum SharedVisionsFont {
 
-    /// Flip to `true` once Inter-SemiBold / -Medium / -Light are bundled.
-    static let isInterBundled = false
+    /// The Inter family is bundled. Set to `false` to fall back to the system
+    /// face at matching weights — useful for comparing the two.
+    static let isInterBundled = true
 
     static func semiBold(_ style: Font.TextStyle) -> Font {
         font(named: "Inter-SemiBold", weight: .semibold, style: style)

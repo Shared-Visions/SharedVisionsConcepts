@@ -120,10 +120,14 @@ fileprivate let mockPeople: [Person] = {
     let appPool = AppTag.allCases
 
     return names.enumerated().map { index, name in
-        // One to three apps per person, picked deterministically so the dome
-        // looks the same on every launch and screenshots stay comparable
-        // across review rounds.
-        let appCount = 1 + (index % 3)
+        // Four to six apps per person. The lower bound matters: the bubbles
+        // sit on the app icon's hexagon, and below about four dots the shape
+        // reads as a short arc up the right-hand side rather than a hexagon,
+        // so the motif is lost. Six fills the ring exactly.
+        //
+        // Picked deterministically so the dome looks the same on every launch
+        // and screenshots stay comparable across review rounds.
+        let appCount = 4 + (index % 3)
         let apps = (0..<appCount).map { offset in
             appPool[(index * 2 + offset) % appPool.count]
         }
@@ -1105,14 +1109,22 @@ fileprivate struct PersonSelectionOverlay: View {
                     .font(SharedVisionsFont.light(.caption))
                     .foregroundStyle(.secondary)
 
-                HStack(spacing: 10) {
-                    ForEach(person.apps) { app in
-                        Label(app.label, systemImage: app.symbol)
-                            .font(SharedVisionsFont.medium(.caption))
-                            .labelStyle(.titleAndIcon)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(app.tint.opacity(0.28), in: .capsule)
+                // Wrapped three to a row. People now carry up to six apps so
+                // the dome's hexagon motif reads, and six of these capsules
+                // in one row would overflow the panel's 420pt width.
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(stride(from: 0, to: person.apps.count, by: 3)), id: \.self) { start in
+                        HStack(spacing: 10) {
+                            ForEach(start..<min(start + 3, person.apps.count), id: \.self) { index in
+                                let app = person.apps[index]
+                                Label(app.label, systemImage: app.symbol)
+                                    .font(SharedVisionsFont.medium(.caption))
+                                    .labelStyle(.titleAndIcon)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(app.tint.opacity(0.28), in: .capsule)
+                            }
+                        }
                     }
                 }
             }

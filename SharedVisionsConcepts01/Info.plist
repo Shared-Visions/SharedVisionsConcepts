@@ -21,5 +21,11 @@
 	</dict>
 	<key>NSHandsTrackingUsageDescription</key>
 	<string>Shared Visions uses hand tracking to summon a person's profile above your open palm.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Inter-SemiBold.ttf</string>
+		<string>Inter-Medium.ttf</string>
+		<string>Inter-Light.ttf</string>
+	</array>
 </dict>
 </plist>
