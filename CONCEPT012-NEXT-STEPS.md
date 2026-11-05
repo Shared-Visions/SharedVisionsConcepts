@@ -96,6 +96,35 @@ fourth slider to `TuningPanel` is straightforward.
 
 ## Open items
 
+**Inter is not bundled.** The brand face is Inter (SemiBold / Medium / Light),
+which is not a system face on visionOS and has no font files in the repo. Every
+call in `SharedVisionsFont` currently falls back to the system face at the
+matching weight, so weight hierarchy is right but the letterforms are not. Drop
+the Inter family into the bundle, list it under `UIAppFonts` in Info.plist, and
+flip `SharedVisionsFont.isInterBundled` — no call sites change. Inter is
+SIL Open Font License, so bundling it is fine; it just needs the files.
+
+**Two style-guide swatches were mislabelled.** A dusty pink labelled `349CF2`
+(a mid blue) and a light green labelled `3CD3FE` (a cyan). Per the designers the
+swatches are right and the labels wrong, so both were recovered from the guide's
+own pixels: the guide is a glass panel and renders every swatch lighter than
+its true value, so fitting that shift across the seven swatches whose label and
+appearance *do* agree gave `rendered = 0.778 x true + 51.9` (R² = 0.974), and
+inverting it yields `#E17A94` and `#9CEE8C`. Accurate to a few units, not exact
+— worth replacing with the designers' real hex.
+
+**App bubbles rarely form a hexagon.** The roster gives each person one to three
+apps, so in practice the hex pattern renders as a short arc up the right-hand
+side and the motif does not read. Six apps makes a full hexagon. Widening the
+per-person range in `mockPeople` is a one-line change if the motif matters more
+than the variety.
+
+**The logo is drawn, not an asset.** `SharedVisionsMark` draws the hexagon from
+the same `hexagonVertex` geometry the app bubbles use, since there is no logo
+artwork in the repo. It stays sharp at any size and needs no asset, but it is a
+reconstruction from the style guide image — swap in the official artwork when
+available; call sites take a diameter and nothing else.
+
 **Real app icons.** `AppTag.symbol` uses SF Symbols because there is no app-icon
 artwork in the asset catalogue. One line per case once the images exist. The
 bubbles are now large enough for an icon to read, which they were not on the
