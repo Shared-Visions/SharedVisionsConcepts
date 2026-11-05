@@ -8,7 +8,7 @@
 //
 //  Type: Window Alt
 //
-//  Featured: true
+//  Featured: false
 //
 //  Created by Joseph Simpson on 2/6/26.
 

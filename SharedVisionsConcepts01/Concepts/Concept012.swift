@@ -20,11 +20,20 @@ import CoreImage
 
 // MARK: - Mock Data
 
+/// Filter roles.
+///
+/// The first four come from the design comp's wireframe. `producer` is a
+/// deliberate addition: the persona roster includes a Studio Founder, a
+/// Product Manager and a Live Performance Producer, and filing those under
+/// "Videographer" would make that filter return results a reviewer would
+/// read as a bug. Fold them back in and drop this case if the design team
+/// would rather keep exactly four.
 fileprivate enum Role: String, CaseIterable, Identifiable {
     case developer = "Developer"
     case designer = "Designer"
     case artist = "Artist"
     case videographer = "Videographer"
+    case producer = "Producer"
 
     var id: String { rawValue }
 }
@@ -126,6 +135,9 @@ fileprivate enum AppTag: String, CaseIterable, Identifiable {
 fileprivate struct Person: Identifiable {
     let id: Int
     let name: String
+    /// Actual job title, e.g. "Spatial Audio Composer". Shown to the viewer;
+    /// `role` is only the filter bucket it falls into.
+    let title: String
     let role: Role
     let headshot: String
     let accentColor: Color
@@ -138,28 +150,26 @@ fileprivate struct Person: Identifiable {
 /// headshots are bundled, so faces repeat a little over three times across
 /// the dome — the comps repeat faces too, so this matches rather than fights
 /// them, but it is the reason to treat the roster as placeholder.
+/// The community roster, built from the AVP persona renders.
+///
+/// Twenty real identities with names, job titles and portraits, replacing the
+/// forty invented names and twelve stock headshots this used before. Faces no
+/// longer repeat at all, where they previously appeared three or four times
+/// around the dome.
+///
+/// The trade-off is density: twenty orbs across the comp's 200-degree field
+/// read sparser than forty did. Repeating the roster would restore the
+/// density but duplicate names, which is a worse defect than a thinner dome
+/// — two people called Maya is the kind of thing a reviewer reports. The
+/// field-of-view slider is the dial if it wants tightening.
 fileprivate let mockPeople: [Person] = {
-    let names = [
-        "Avery Chen", "Jordan Blake", "Riley Nakamura", "Sam Okafor",
-        "Morgan Reyes", "Casey Whitfield", "Drew Sinclair", "Rowan Patel",
-        "Elliot Marsh", "Harper Voss", "Quinn Alvarez", "Skyler Duarte",
-        "Reese Hallberg", "Finley Okonjo", "Parker Iida", "Sasha Renner",
-        "Tatum Osei", "Marlowe Petrov", "Wren Kowalski", "Emerson Kade",
-        "Noa Lindqvist", "Dashiell Moreau", "Imani Carrington", "Teodoro Vasquez",
-        "Saoirse Behan", "Kenji Arakawa", "Priya Raghunathan", "Lucia Ferraro",
-        "Obi Nwachukwu", "Greta Halvorsen", "Mateo Bustamante", "Anouk Visser",
-        "Rafiq Haddad", "Sunniva Dahl", "Camille Beauchene", "Yusuf Demirci",
-        "Thandiwe Mokoena", "Linnea Soren", "Arjun Kapadia", "Beatrix Nagy"
-    ]
-
     let accentColors = SharedVisionsBrand.personAccents
     let appPool = AppTag.allCases
 
-    return names.enumerated().map { index, name in
-        // Four to six apps per person. The lower bound matters: the bubbles
-        // sit on the app icon's hexagon, and below about four dots the shape
-        // reads as a short arc up the right-hand side rather than a hexagon,
-        // so the motif is lost. Six fills the ring exactly.
+    return personaRoster.enumerated().map { index, member in
+        // Four to six categories per person. The lower bound matters: the
+        // bubbles sit on the app icon's hexagon, and below about four dots
+        // the shape reads as an arc rather than a hexagon.
         //
         // Picked deterministically so the dome looks the same on every launch
         // and screenshots stay comparable across review rounds.
@@ -170,9 +180,12 @@ fileprivate let mockPeople: [Person] = {
 
         return Person(
             id: index,
-            name: name,
-            role: Role.allCases[index % Role.allCases.count],
-            headshot: adultHeadshotName(for: index),
+            name: member.name,
+            title: member.title,
+            // The generator buckets each job title; falling back to artist
+            // keeps a new title visible rather than crashing on it.
+            role: Role(rawValue: member.role) ?? .artist,
+            headshot: member.asset,
             accentColor: accentColors[index % accentColors.count],
             apps: apps
         )
@@ -939,7 +952,7 @@ fileprivate struct PersonAttachment: View {
         }
         .frame(width: extent, height: extent)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(person.name), \(person.role.rawValue)")
+        .accessibilityLabel("\(person.name), \(person.title)")
     }
 }
 
@@ -1035,7 +1048,7 @@ fileprivate struct DocumentaryPanel: View {
                         .font(SharedVisionsFont.semiBold(.title3))
                         .foregroundStyle(SharedVisionsBrand.white)
                     if let person {
-                        Text("\(person.name) · \(person.role.rawValue)")
+                        Text("\(person.name) · \(person.title)")
                             .font(SharedVisionsFont.medium(.subheadline))
                             // Explicit white rather than `.secondary`, which
                             // renders near-invisible over the black video.
@@ -1231,7 +1244,7 @@ fileprivate struct PersonSelectionOverlay: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(person.name)
                         .font(SharedVisionsFont.semiBold(.title2))
-                    Text(person.role.rawValue)
+                    Text(person.title)
                         .font(SharedVisionsFont.medium(.callout))
                         .foregroundStyle(.secondary)
                 }
@@ -1280,7 +1293,7 @@ fileprivate struct PersonSelectionOverlay: View {
         .frame(width: 420, alignment: .leading)
         .padding(24)
         .glassBackgroundEffect()
-        .accessibilityLabel("Profile for \(person.name), \(person.role.rawValue)")
+        .accessibilityLabel("Profile for \(person.name), \(person.title)")
     }
 }
 

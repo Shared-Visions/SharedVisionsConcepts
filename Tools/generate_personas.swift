@@ -25,7 +25,7 @@ guard let sourceDir = args.first else {
 }
 
 let outputRoot = "SharedVisionsConcepts01/Assets.xcassets/Personas"
-let side = 256
+let side = 512
 
 // MARK: - Roster parsing
 
@@ -33,7 +33,46 @@ struct Persona {
     let index: Int
     let asset: String
     let name: String
+    /// The person's actual job title, e.g. "Spatial Audio Composer".
+    let title: String
+    /// Which filter bucket they fall into. See `bucket(for:)`.
     let role: String
+}
+
+/// Maps a job title onto one of Concept 012's filter roles.
+///
+/// The design comp specified four — Developer, Designer, Artist,
+/// Videographer — and twenty job titles do not divide cleanly into them.
+/// Four of the five buckets are obvious; the problem is the production
+/// people. A Studio Founder and a Product Manager are not videographers in
+/// any sense, and filing them there would make "Videographer" return results
+/// a reviewer would read as a bug.
+///
+/// So this adds a fifth bucket, **Producer**, which is a deliberate
+/// deviation from the comp's four. Flagged rather than hidden: drop
+/// `producer` and fold those three into `videographer` if the design team
+/// would rather keep exactly four.
+func bucket(for title: String) -> String {
+    let t = title.lowercased()
+
+    if t.contains("developer") || t.contains("engineer") || t.contains("dev") {
+        return "Developer"
+    }
+    if t.contains("designer") || t.contains("architect") || t.contains("researcher") {
+        return "Designer"
+    }
+    if t.contains("artist") || t.contains("composer") || t.contains("curator") {
+        return "Artist"
+    }
+    if t.contains("filmmaker") || t.contains("film") || t.contains("streamer") {
+        return "Videographer"
+    }
+    if t.contains("producer") || t.contains("founder") || t.contains("manager") {
+        return "Producer"
+    }
+    // Unreachable for the current roster; a new title lands here rather than
+    // being silently misfiled.
+    return "Artist"
 }
 
 /// `01-maya-spatial-ux-designer` -> index 1, name "Maya", role "Spatial UX Designer".
@@ -58,13 +97,22 @@ func parse(_ stem: String) -> Persona? {
         index: index,
         asset: String(format: "Persona%02d", index),
         name: name,
-        role: role
+        title: role,
+        role: bucket(for: role)
     )
 }
 
 // MARK: - Masking
 
-func circularMasked(_ image: NSImage) -> Data? {
+/// Re-encodes a persona render at `side` square, full frame.
+///
+/// Deliberately *not* masked to a circle. Concept 012 lifts the subject with
+/// Vision's foreground-instance mask at runtime, exactly as it does for the
+/// stock headshots, and that needs the original background to cut against —
+/// handing it a pre-masked circle would mean cutting out an already-cut
+/// shape. Verified the lift succeeds on these renders: one foreground
+/// instance each, real alpha, transparent corners.
+func resized(_ image: NSImage) -> Data? {
     guard let context = CGContext(
         data: nil,
         width: side,
@@ -75,44 +123,15 @@ func circularMasked(_ image: NSImage) -> Data? {
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
     ) else { return nil }
 
-    guard var rect = NSRect(x: 0, y: 0, width: side, height: side) as NSRect?,
-          let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+    var rect = NSRect(x: 0, y: 0, width: side, height: side)
+    guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     else { return nil }
 
-    // Soft-edged circular clip: a hard clip aliases badly once the face is
-    // only a few dozen pixels across on the dome.
-    let inset = Double(side) * 0.02
-    let diameter = Double(side) - inset * 2
-    context.saveGState()
-    context.addEllipse(in: CGRect(x: inset, y: inset, width: diameter, height: diameter))
-    context.clip()
+    context.interpolationQuality = .high
     context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
-    context.restoreGState()
-
-    // Feather the rim by drawing a few progressively fainter black rings
-    // outside the face, so the edge fades instead of cutting.
-    let feather = Double(side) * 0.055
-    let steps = 8
-    for step in 0..<steps {
-        let t = Double(step) / Double(steps)
-        let ringInset = inset + feather * t
-        let ringDiameter = Double(side) - ringInset * 2
-        context.setStrokeColor(CGColor(gray: 0, alpha: 0))
-        context.setBlendMode(.destinationOut)
-        context.setLineWidth(feather / Double(steps) + 0.6)
-        context.setStrokeColor(CGColor(gray: 0, alpha: 0.26 * (1 - t)))
-        context.strokeEllipse(in: CGRect(
-            x: ringInset,
-            y: ringInset,
-            width: ringDiameter,
-            height: ringDiameter
-        ))
-    }
-    context.setBlendMode(.normal)
 
     guard let out = context.makeImage() else { return nil }
-    let rep = NSBitmapImageRep(cgImage: out)
-    return rep.representation(using: .png, properties: [:])
+    return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
 }
 
 // MARK: - Run
@@ -146,7 +165,7 @@ for file in files {
         continue
     }
     guard let image = NSImage(contentsOfFile: "\(sourceDir)/\(file)"),
-          let png = circularMasked(image) else {
+          let png = resized(image) else {
         print("  skipped (unreadable): \(file)")
         continue
     }
@@ -172,13 +191,13 @@ for file in files {
     """.write(toFile: "\(setDir)/Contents.json", atomically: true, encoding: .utf8)
 
     roster.append(persona)
-    print("  \(persona.asset)  \(persona.name) — \(persona.role)")
+    print("  \(persona.asset)  \(persona.name) — \(persona.title)  [\(persona.role)]")
 }
 
 // Emit the roster as Swift so names and roles cannot drift from the assets.
 let entries = roster
     .sorted { $0.index < $1.index }
-    .map { "    PersonaMember(asset: \"\($0.asset)\", name: \"\($0.name)\", role: \"\($0.role)\")," }
+    .map { "    PersonaMember(asset: \"\($0.asset)\", name: \"\($0.name)\", title: \"\($0.title)\", role: \"\($0.role)\")," }
     .joined(separator: "\n")
 
 let generated = """
@@ -195,6 +214,9 @@ import Foundation
 struct PersonaMember: Sendable {
     let asset: String
     let name: String
+    /// Actual job title, shown to the viewer.
+    let title: String
+    /// Filter bucket, one of Concept 012's `Role` values.
     let role: String
 }
 

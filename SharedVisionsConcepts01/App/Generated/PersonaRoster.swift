@@ -11,29 +11,32 @@ import Foundation
 struct PersonaMember: Sendable {
     let asset: String
     let name: String
+    /// Actual job title, shown to the viewer.
+    let title: String
+    /// Filter bucket, one of Concept 012's `Role` values.
     let role: String
 }
 
 /// The 20 community members used by Concept 011.
 let personaRoster: [PersonaMember] = [
-    PersonaMember(asset: "Persona01", name: "Maya", role: "Spatial UX Designer"),
-    PersonaMember(asset: "Persona02", name: "Daniel", role: "Indie Game Developer"),
-    PersonaMember(asset: "Persona03", name: "Priya", role: "Immersive Film Producer"),
-    PersonaMember(asset: "Persona04", name: "Marcus", role: "Spatial Audio Composer"),
-    PersonaMember(asset: "Persona05", name: "Hiro", role: "3D Artist"),
-    PersonaMember(asset: "Persona06", name: "Elena", role: "Studio Founder"),
-    PersonaMember(asset: "Persona07", name: "Tomas", role: "Junior Swift Developer"),
-    PersonaMember(asset: "Persona08", name: "Aisha", role: "visionOS Developer"),
-    PersonaMember(asset: "Persona09", name: "Greg", role: "Veteran Engineer"),
-    PersonaMember(asset: "Persona10", name: "Mei", role: "Concept Artist"),
-    PersonaMember(asset: "Persona11", name: "Jamal", role: "Live Performance Producer"),
-    PersonaMember(asset: "Persona12", name: "Sofia", role: "Narrative Designer"),
-    PersonaMember(asset: "Persona13", name: "Raj", role: "Product Manager"),
-    PersonaMember(asset: "Persona14", name: "Chloe", role: "Student Indie Dev"),
-    PersonaMember(asset: "Persona15", name: "Olu", role: "Spatial Architect"),
-    PersonaMember(asset: "Persona16", name: "Karen", role: "UX Researcher"),
-    PersonaMember(asset: "Persona17", name: "Sven", role: "Hardware Engineer"),
-    PersonaMember(asset: "Persona18", name: "Yuna", role: "Streamer Creator"),
-    PersonaMember(asset: "Persona19", name: "Kai", role: "Spatial Filmmaker"),
-    PersonaMember(asset: "Persona20", name: "Ingrid", role: "Immersive Art Curator"),
+    PersonaMember(asset: "Persona01", name: "Maya", title: "Spatial UX Designer", role: "Designer"),
+    PersonaMember(asset: "Persona02", name: "Daniel", title: "Indie Game Developer", role: "Developer"),
+    PersonaMember(asset: "Persona03", name: "Priya", title: "Immersive Film Producer", role: "Videographer"),
+    PersonaMember(asset: "Persona04", name: "Marcus", title: "Spatial Audio Composer", role: "Artist"),
+    PersonaMember(asset: "Persona05", name: "Hiro", title: "3D Artist", role: "Artist"),
+    PersonaMember(asset: "Persona06", name: "Elena", title: "Studio Founder", role: "Producer"),
+    PersonaMember(asset: "Persona07", name: "Tomas", title: "Junior Swift Developer", role: "Developer"),
+    PersonaMember(asset: "Persona08", name: "Aisha", title: "visionOS Developer", role: "Developer"),
+    PersonaMember(asset: "Persona09", name: "Greg", title: "Veteran Engineer", role: "Developer"),
+    PersonaMember(asset: "Persona10", name: "Mei", title: "Concept Artist", role: "Artist"),
+    PersonaMember(asset: "Persona11", name: "Jamal", title: "Live Performance Producer", role: "Producer"),
+    PersonaMember(asset: "Persona12", name: "Sofia", title: "Narrative Designer", role: "Designer"),
+    PersonaMember(asset: "Persona13", name: "Raj", title: "Product Manager", role: "Producer"),
+    PersonaMember(asset: "Persona14", name: "Chloe", title: "Student Indie Dev", role: "Developer"),
+    PersonaMember(asset: "Persona15", name: "Olu", title: "Spatial Architect", role: "Designer"),
+    PersonaMember(asset: "Persona16", name: "Karen", title: "UX Researcher", role: "Designer"),
+    PersonaMember(asset: "Persona17", name: "Sven", title: "Hardware Engineer", role: "Developer"),
+    PersonaMember(asset: "Persona18", name: "Yuna", title: "Streamer Creator", role: "Videographer"),
+    PersonaMember(asset: "Persona19", name: "Kai", title: "Spatial Filmmaker", role: "Videographer"),
+    PersonaMember(asset: "Persona20", name: "Ingrid", title: "Immersive Art Curator", role: "Artist"),
 ]

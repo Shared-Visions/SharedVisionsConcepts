@@ -133,7 +133,7 @@ fileprivate final class LivingConstellationController {
     private let root = Entity()
     private var built = false
     private var sequenceStarted = false
-    private var nodes: [(dot: ModelEntity, halo: ModelEntity, face: ModelEntity)] = []
+    private var nodes: [(dot: ModelEntity, halo: ModelEntity)] = []
     private var nodePositions: [SIMD3<Float>] = []
 
     /// Randomised once per controller — so once per entry into the space —
@@ -285,24 +285,7 @@ fileprivate final class LivingConstellationController {
             halo.position = position
             root.addChild(halo)
 
-            // A persona face per node. The constellation is meant to be
-            // people, so the dots resolve into community members rather than
-            // staying abstract points.
-            //
-            // A textured plane, not an attachment: 72 SwiftUI attachments
-            // would be far heavier than 72 quads, and the face needs no
-            // interactivity here.
-            let face = ModelEntity(
-                mesh: .generatePlane(width: 0.1, height: 0.1, cornerRadius: 0.05),
-                materials: [personaMaterial(for: nodes.count, opacity: 0)]
-            )
-            face.position = position
-            // Billboarded so faces meet the viewer wherever they sit on a
-            // 360-degree dome.
-            face.components.set(BillboardComponent())
-            root.addChild(face)
-
-            nodes.append((dot: dot, halo: halo, face: face))
+            nodes.append((dot: dot, halo: halo))
         }
 
         connections = makeEdges(for: positions).enumerated().map { index, edge in
@@ -398,9 +381,6 @@ fileprivate final class LivingConstellationController {
                 dotScale: 0.88 - 0.38 * eased,
                 haloScale: 0.95 + 0.10 * eased
             )
-            // Faces arrive with the blue: the scattered stars resolve into
-            // the community the documentary is about.
-            applyFaceOpacity(0.92 * eased, scale: 0.72 + 0.28 * eased)
             try? await Task.sleep(for: .milliseconds(55))
         }
     }
@@ -548,39 +528,6 @@ fileprivate final class LivingConstellationController {
         entity.model = model
     }
 
-    /// Texture for one persona, cached — 72 nodes draw from 20 images, so
-    /// loading per node would decode each face three or four times.
-    @ObservationIgnored
-    private var personaTextures: [String: TextureResource] = [:]
-
-    private func personaTexture(named asset: String) -> TextureResource? {
-        if let cached = personaTextures[asset] { return cached }
-        guard let texture = try? TextureResource.load(named: asset) else { return nil }
-        personaTextures[asset] = texture
-        return texture
-    }
-
-    /// Material for the node at `index`, cycling the roster so faces repeat
-    /// evenly around the dome.
-    private func personaMaterial(for index: Int, opacity: Float) -> UnlitMaterial {
-        var material = UnlitMaterial()
-        let member = personaRoster[index % max(personaRoster.count, 1)]
-        if let texture = personaTexture(named: member.asset) {
-            material.color = .init(tint: .white, texture: .init(texture))
-        } else {
-            material.color = .init(tint: .white)
-        }
-        material.blending = .transparent(opacity: .init(floatLiteral: opacity))
-        return material
-    }
-
-    /// Fades the faces in or out without rebuilding their textures.
-    private func applyFaceOpacity(_ opacity: Float, scale: Float) {
-        for (index, node) in nodes.enumerated() {
-            node.face.model?.materials = [personaMaterial(for: index, opacity: opacity)]
-            node.face.scale = SIMD3<Float>(repeating: scale)
-        }
-    }
 
     private func spawnLightningBolt(
         for connection: ConstellationConnection,
