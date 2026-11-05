@@ -133,7 +133,7 @@ fileprivate final class LivingConstellationController {
     private let root = Entity()
     private var built = false
     private var sequenceStarted = false
-    private var nodes: [(dot: ModelEntity, halo: ModelEntity)] = []
+    private var nodes: [(dot: ModelEntity, halo: ModelEntity, face: ModelEntity)] = []
     private var nodePositions: [SIMD3<Float>] = []
 
     /// Randomised once per controller — so once per entry into the space —
@@ -231,13 +231,28 @@ fileprivate final class LivingConstellationController {
 
     /// Plays a crack from the bolt itself, so the sound arrives from the
     /// direction the viewer saw the flash.
-    private func playThunder(on bolt: Entity, near: Bool) {
+    /// Plays a crack from the strike's own position in the room.
+    ///
+    /// This was broken, and subtly. A ribbon's vertices are world-space, so
+    /// `bolt.root` keeps an identity transform at the origin — attaching
+    /// `SpatialAudioComponent` there put every crack at the centre of the
+    /// room, dead ahead, no matter where its bolt actually was. The thunder
+    /// was spatialised the whole time; it just had one position.
+    ///
+    /// The emitter is now its own child entity placed at the strike, so a
+    /// bolt behind the viewer cracks behind them.
+    private func playThunder(at position: SIMD3<Float>, on parent: Entity, near: Bool) {
         guard let resource = near ? nearThunder : farThunder else { return }
-        guard Date.now.timeIntervalSince(lastThunder) > 0.11 else { return }
+        // Loosened from 110ms: with strikes spread around the viewer, several
+        // cracks at once read as a storm rather than as mush.
+        guard Date.now.timeIntervalSince(lastThunder) > 0.07 else { return }
         lastThunder = .now
 
-        bolt.components.set(SpatialAudioComponent(gain: near ? -9 : -17))
-        bolt.playAudio(resource)
+        let emitter = Entity()
+        emitter.position = position
+        emitter.components.set(SpatialAudioComponent(gain: near ? -6 : -14))
+        parent.addChild(emitter)
+        emitter.playAudio(resource)
     }
 
     private var connections: [ConstellationConnection] = []
@@ -270,7 +285,24 @@ fileprivate final class LivingConstellationController {
             halo.position = position
             root.addChild(halo)
 
-            nodes.append((dot: dot, halo: halo))
+            // A persona face per node. The constellation is meant to be
+            // people, so the dots resolve into community members rather than
+            // staying abstract points.
+            //
+            // A textured plane, not an attachment: 72 SwiftUI attachments
+            // would be far heavier than 72 quads, and the face needs no
+            // interactivity here.
+            let face = ModelEntity(
+                mesh: .generatePlane(width: 0.1, height: 0.1, cornerRadius: 0.05),
+                materials: [personaMaterial(for: nodes.count, opacity: 0)]
+            )
+            face.position = position
+            // Billboarded so faces meet the viewer wherever they sit on a
+            // 360-degree dome.
+            face.components.set(BillboardComponent())
+            root.addChild(face)
+
+            nodes.append((dot: dot, halo: halo, face: face))
         }
 
         connections = makeEdges(for: positions).enumerated().map { index, edge in
@@ -366,29 +398,51 @@ fileprivate final class LivingConstellationController {
                 dotScale: 0.88 - 0.38 * eased,
                 haloScale: 0.95 + 0.10 * eased
             )
+            // Faces arrive with the blue: the scattered stars resolve into
+            // the community the documentary is about.
+            applyFaceOpacity(0.92 * eased, scale: 0.72 + 0.28 * eased)
             try? await Task.sleep(for: .milliseconds(55))
         }
     }
 
     private func animateConnectionSequence() async {
-        // One pool, ordered by how far each link sits from dead ahead. The
-        // storm then walks inward: early waves fire out at the edges of
-        // vision, later ones close on the centre, and the title arrives where
-        // the lightning has just converged.
+        // Every link, ordered by how far it sits from straight ahead, so the
+        // storm can be steered from "all around you" to "right in front".
         let pool = (heroLightningConnections() + ambientThirtyPercentConnections())
             .map { (connection: $0, offAxis: offAxisDistance(for: $0)) }
             .sorted { $0.offAxis > $1.offAxis }          // outermost first
             .map(\.connection)
 
-        guard pool.count >= 4 else { return }
+        guard pool.count >= 6 else { return }
 
-        // Each wave draws from a window that slides from the outside in.
-        // Windows overlap so the march inward reads as a drift, not a jump.
-        let windows: [(lower: Double, upper: Double)] = [
-            (0.55, 1.00),
-            (0.35, 0.80),
-            (0.15, 0.55),
-            (0.00, 0.32),
+        // --- Phase A: scatter -------------------------------------------
+        // Isolated sparks anywhere on the dome, behind the viewer included,
+        // drawn from the whole pool at random. The point is that the storm
+        // has no location yet — it is all around and nothing is in front.
+        for pass in 0..<3 {
+            let sparks = pool.shuffled().prefix(Int.random(in: 4...7))
+            for (index, connection) in sparks.enumerated() {
+                spawnLightningBolt(
+                    for: connection,
+                    seed: connection.seed &+ runSalt &+ pass * 97 &+ index * 29,
+                    delayMilliseconds: Int.random(in: 0...180),
+                    // Scattered sparks stay simple; the forked ones come later
+                    // so the escalation has somewhere to go.
+                    includeBranch: Bool.random() && Bool.random()
+                )
+            }
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 270...360)))
+        }
+
+        // --- Phase B: coalesce forward, accelerating --------------------
+        // Windows slide from the periphery to dead ahead while the gap
+        // between waves shortens, so the storm both closes in and speeds up.
+        let windows: [(lower: Double, upper: Double, gap: Int, stagger: Int)] = [
+            (0.55, 1.00, 300, 14),
+            (0.38, 0.82, 235, 11),
+            (0.20, 0.60, 175, 9),
+            (0.08, 0.40, 130, 7),
+            (0.00, 0.24,  95, 5),
         ]
 
         for (wave, window) in windows.enumerated() {
@@ -398,48 +452,48 @@ fileprivate final class LivingConstellationController {
 
             let slice = Array(pool[lower..<upper])
                 .shuffled()
-                // Fires most of each window. Density is turned up here
-                // rather than by adding waves, so the sequence does not get
-                // any longer than the pacing that was signed off.
                 .prefix(max(3, Int(Double(upper - lower) * Double.random(in: 0.68...0.92))))
 
             for (index, connection) in slice.enumerated() {
-                // Fork the nearer half richly; distant strikes read as
-                // silhouettes anyway and the forks are wasted there.
-                let isNear = wave >= 2
                 spawnLightningBolt(
                     for: connection,
                     seed: connection.seed &+ runSalt &+ wave * 211 &+ index * 19,
-                    delayMilliseconds: Int.random(in: 0...30) + index * 11,
-                    includeBranch: isNear || Bool.random()
+                    delayMilliseconds: Int.random(in: 0...22) + index * window.stagger,
+                    // Fork the nearer waves richly; distant strikes read as
+                    // silhouettes and the detail is wasted on them.
+                    includeBranch: wave >= 2 || Bool.random()
                 )
             }
 
-            try? await Task.sleep(for: .milliseconds(Int.random(in: 250...330)))
+            try? await Task.sleep(for: .milliseconds(window.gap))
         }
 
-        // Final flash on the innermost quarter, immediately before the title.
-        let core = Array(pool.suffix(max(2, pool.count / 4))).shuffled()
-        for (index, connection) in core.enumerated() {
+        // --- Phase C: front crescendo ----------------------------------
+        // The innermost third, fired almost together, directly where the
+        // title is about to appear.
+        let front = Array(pool.suffix(max(3, pool.count / 3))).shuffled()
+        for (index, connection) in front.enumerated() {
             spawnLightningBolt(
                 for: connection,
                 seed: connection.seed &+ runSalt &+ 9001 &+ index * 31,
-                delayMilliseconds: index * 12,
+                delayMilliseconds: index * 6,
                 includeBranch: true
             )
         }
 
-        try? await Task.sleep(for: .milliseconds(200))
+        try? await Task.sleep(for: .milliseconds(240))
     }
 
     /// How far a connection sits from straight ahead, in metres.
     ///
-    /// Measured against the point directly in front of the viewer on the
-    /// dome, so "inward" means toward where the title will appear.
+    /// Measured against the point directly in front of the viewer, so larger
+    /// means further round toward the sides and behind — which is what lets
+    /// the sequence march from everywhere to dead ahead.
     private func offAxisDistance(for connection: ConstellationConnection) -> Float {
         let ahead = SIMD3<Float>(0, DomeLayout.defaultEyeLevel, -1.6)
         return simd_distance(connection.midpoint, ahead)
     }
+
 
     private func startIdleBlueBreathing() {
         for (index, node) in nodes.enumerated() {
@@ -494,6 +548,40 @@ fileprivate final class LivingConstellationController {
         entity.model = model
     }
 
+    /// Texture for one persona, cached — 72 nodes draw from 20 images, so
+    /// loading per node would decode each face three or four times.
+    @ObservationIgnored
+    private var personaTextures: [String: TextureResource] = [:]
+
+    private func personaTexture(named asset: String) -> TextureResource? {
+        if let cached = personaTextures[asset] { return cached }
+        guard let texture = try? TextureResource.load(named: asset) else { return nil }
+        personaTextures[asset] = texture
+        return texture
+    }
+
+    /// Material for the node at `index`, cycling the roster so faces repeat
+    /// evenly around the dome.
+    private func personaMaterial(for index: Int, opacity: Float) -> UnlitMaterial {
+        var material = UnlitMaterial()
+        let member = personaRoster[index % max(personaRoster.count, 1)]
+        if let texture = personaTexture(named: member.asset) {
+            material.color = .init(tint: .white, texture: .init(texture))
+        } else {
+            material.color = .init(tint: .white)
+        }
+        material.blending = .transparent(opacity: .init(floatLiteral: opacity))
+        return material
+    }
+
+    /// Fades the faces in or out without rebuilding their textures.
+    private func applyFaceOpacity(_ opacity: Float, scale: Float) {
+        for (index, node) in nodes.enumerated() {
+            node.face.model?.materials = [personaMaterial(for: index, opacity: opacity)]
+            node.face.scale = SIMD3<Float>(repeating: scale)
+        }
+    }
+
     private func spawnLightningBolt(
         for connection: ConstellationConnection,
         seed: Int,
@@ -538,7 +626,7 @@ fileprivate final class LivingConstellationController {
             )
             addSourceFlash(at: connection.start, to: bolt.root)
             root.addChild(bolt.root)
-            playThunder(on: bolt.root, near: includeBranch)
+            playThunder(at: connection.midpoint, on: bolt.root, near: includeBranch)
 
             // --- Writhe ------------------------------------------------
             // Cycle shapes at roughly 20Hz while the channel is lit. This is

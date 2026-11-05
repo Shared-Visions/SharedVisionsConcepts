@@ -86,69 +86,100 @@ def brown(n, leak=0.996):
 
 # ---------------------------------------------------------------- the swell
 
-def swell(duration=5.0):
+def swell(duration=4.6):
+    """Dramatic build for the intro.
+
+    **Deliberately not a converging glissando.** The first version had many
+    voices sliding from scattered pitches into a stacked chord, and on device
+    it was recognisable as the THX Deep Note — which is a registered
+    trademark. Different pitch content was not enough protection, because the
+    glide *is* the recognisable gesture, not the voicing.
+
+    This replaces it with a different gesture entirely:
+
+      - voices **enter at their final pitches**, staggered, so the chord
+        assembles like an organ stop being pulled rather than sliding into
+        focus. Nothing glides.
+      - the voicing is **quartal** — fourths, fifths and a ninth on E — rather
+        than the octave-and-fifth power stack. Open and unresolved instead of
+        monolithic, which also suits "we're gathering a community" better.
+      - tension comes from a **filtered noise riser**, a standard cinematic
+        device that belongs to nobody, rather than from pitch movement.
+      - it lands on an **impact**, not an arrival of travel.
+    """
     n = int(RATE * duration)
 
-    # Octaves and fifths on E. Stacked this way the arrival reads as one
-    # enormous note rather than a chord, which is what gives it the weight.
-    targets = [41.2, 61.7, 82.4, 123.5, 164.8, 246.9, 329.6, 494.0]
-
-    voices = []
-    for i in range(20):
-        target = targets[i % len(targets)]
-        voices.append({
-            "start": random.uniform(85, 330),      # scattered, unsettled
-            "target": target,
-            "detune": random.uniform(-0.6, 0.6),   # cents of spread on arrival
-            "phase": random.uniform(0, 2 * math.pi),
-            "pan_gain": random.uniform(0.55, 1.0),
-            # Voices arrive at slightly different moments so the convergence
-            # lands as a gathering rather than a gear change.
-            "arrive": random.uniform(0.62, 0.84),
-            "drift_rate": random.uniform(0.12, 0.5),
-            "drift_depth": random.uniform(1.5, 7.0),
-        })
+    # Quartal stack on E: root, fourth, fifth, octave, then upper fourths and
+    # a ninth. No bare octave doubling of the root, which is what makes a
+    # power stack sound monolithic.
+    voicing = [41.2, 55.0, 61.7, 82.4, 110.0, 123.5, 164.8, 220.0, 246.9, 277.2]
 
     out = [0.0] * n
 
-    for v in voices:
-        phase = v["phase"]
-        for i in range(n):
-            t = i / n
+    for index, base in enumerate(voicing):
+        # Staggered entries: low voices first, so the chord builds upward.
+        entry = 0.08 + (index / len(voicing)) * 0.54
+        # Two slightly detuned copies per pitch for width, without glide.
+        for copy in range(2):
+            freq = base * (1 + random.uniform(-0.0016, 0.0016))
+            phase = random.uniform(0, 2 * math.pi)
+            # Slow amplitude shimmer, so a held chord is not static.
+            trem_rate = random.uniform(0.3, 1.1)
+            trem_depth = random.uniform(0.05, 0.16)
 
-            # Glide, eased so it creeps then rushes.
-            g = min(1.0, t / v["arrive"])
-            g = g * g * (3 - 2 * g)
+            for i in range(n):
+                t = i / n
+                if t < entry:
+                    continue
 
-            drift = math.sin(2 * math.pi * v["drift_rate"] * (i / RATE)) * v["drift_depth"] * (1 - g)
-            freq = v["start"] + (v["target"] + v["detune"] - v["start"]) * g + drift
+                # Each voice fades in over its own short ramp.
+                ramp = min(1.0, (t - entry) / 0.22)
+                ramp = ramp * ramp * (3 - 2 * ramp)
 
-            phase += 2 * math.pi * freq / RATE
+                phase += 2 * math.pi * freq / RATE
+                s = math.sin(phase) + 0.34 * math.sin(2 * phase) + 0.12 * math.sin(3 * phase)
+                trem = 1 - trem_depth + trem_depth * math.sin(2 * math.pi * trem_rate * (i / RATE))
 
-            # A few harmonics give it body; weight drops with harmonic number
-            # so it stays warm rather than buzzy.
-            s = math.sin(phase) + 0.42 * math.sin(2 * phase) + 0.17 * math.sin(3 * phase)
+                # Overall shape: steady climb, brief plateau, quick release.
+                if t < 0.86:
+                    env = (t / 0.86) ** 1.9
+                elif t < 0.94:
+                    env = 1.0
+                else:
+                    env = max(0.0, 1 - (t - 0.94) / 0.06)
 
-            # Swell: near-silent start, steep climb, short plateau, quick fall.
-            if t < 0.80:
-                env = (t / 0.80) ** 2.4
-            elif t < 0.92:
-                env = 1.0
-            else:
-                env = max(0.0, 1 - (t - 0.92) / 0.08)
+                out[i] += s * ramp * trem * env * 0.042
 
-            out[i] += s * env * v["pan_gain"] * 0.05
-
-    # Sub reinforcement under the arrival, so it is felt as well as heard.
+    # Filtered noise riser. Sweeping a lowpass upward reads as rising tension
+    # without moving any pitch, which is the whole point here.
+    riser = white(n)
+    swept = [0.0] * n
+    y = 0.0
     for i in range(n):
         t = i / n
-        env = 0.0 if t < 0.45 else ((t - 0.45) / 0.35) ** 2
-        env = min(env, 1.0)
-        if t > 0.92:
-            env *= max(0.0, 1 - (t - 0.92) / 0.08)
-        out[i] += math.sin(2 * math.pi * 41.2 * i / RATE) * env * 0.5
+        cutoff = 180 + (t ** 2.2) * 5_200
+        a = 1 - math.exp(-2 * math.pi * cutoff / RATE)
+        y += a * (riser[i] - y)
+        env = 0.0 if t > 0.94 else (t ** 2.6)
+        swept[i] = y * env * 0.30
+    for i in range(n):
+        out[i] += swept[i]
 
-    return lowpass(out, 7_000)
+    # Sub and impact at the landing, so the arrival is felt.
+    impact_at = 0.86
+    for i in range(n):
+        t = i / n
+        sub_env = 0.0 if t < 0.3 else min(1.0, ((t - 0.3) / 0.5) ** 2)
+        if t > 0.94:
+            sub_env *= max(0.0, 1 - (t - 0.94) / 0.06)
+        out[i] += math.sin(2 * math.pi * 41.2 * i / RATE) * sub_env * 0.46
+
+        if t >= impact_at:
+            # Short decaying thump on the downbeat of the plateau.
+            k = (t - impact_at) * n / RATE
+            out[i] += math.sin(2 * math.pi * 58 * k) * math.exp(-k * 7) * 0.5
+
+    return lowpass(out, 8_000)
 
 
 # ---------------------------------------------------------------- thunder
