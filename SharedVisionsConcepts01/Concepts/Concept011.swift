@@ -14,6 +14,7 @@
 
 import SwiftUI
 import RealityKit
+import OSLog
 
 struct Concept011: View {
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
@@ -150,6 +151,8 @@ fileprivate final class LivingConstellationController {
 
     // MARK: Audio
 
+    private let audioLog = Logger(subsystem: "com.sharedvisions.concepts", category: "Concept011Audio")
+
     /// Dramatic swell under the whole intro, peaking as the title lands.
     private var swell: AudioFileResource?
     /// Spatialised crack, played from the bolt's own entity.
@@ -166,6 +169,20 @@ fileprivate final class LivingConstellationController {
     /// hundred milliseconds, and a crack on each is both mush and expensive.
     private var lastThunder: Date = .distantPast
 
+    /// Connections with a strike currently in flight, so the same pair of
+    /// dots is never lit twice at once.
+    private var activeConnections = Set<Int>()
+
+    /// Where the viewer's head is, for cylindrical billboarding.
+    ///
+    /// The node field is built with `DomeLayout`'s default centre, which is
+    /// `(0, defaultEyeLevel, 0)` — the viewer stands at the centre of their
+    /// own dome by construction. So the view position is known without
+    /// querying head pose through ARKit at all.
+    private var viewerPosition: SIMD3<Float> {
+        SIMD3<Float>(0, DomeLayout.defaultEyeLevel, 0)
+    }
+
     /// Loads the four clips.
     ///
     /// Spatialisation is not set here. On visionOS the resource no longer
@@ -173,15 +190,23 @@ fileprivate final class LivingConstellationController {
     /// from the audio component on the entity that plays it, so `audioHost`
     /// gets `AmbientAudioComponent` and each bolt gets `SpatialAudioComponent`.
     private func loadAudio() async {
-        // Non-fatal throughout: the sequence should run silently rather than
-        // fail outright if an asset is missing.
-        swell = try? await AudioFileResource(named: "intro-swell.wav")
-        stormBed = try? await AudioFileResource(
-            named: "storm-bed.wav",
-            configuration: .init(shouldLoop: true)
-        )
-        nearThunder = try? await AudioFileResource(named: "thunder-near.wav")
-        farThunder = try? await AudioFileResource(named: "thunder-far.wav")
+        // Loads are non-fatal — the sequence should run silently rather than
+        // fail outright — but they are logged. A capture of the previous
+        // build showed a flat -55 dBFS track with no envelope at all, which
+        // is either a load failure or a recording that never captured app
+        // audio. `try?` alone made those two indistinguishable.
+        do {
+            swell = try await AudioFileResource(named: "intro-swell.wav")
+            stormBed = try await AudioFileResource(
+                named: "storm-bed.wav",
+                configuration: .init(shouldLoop: true)
+            )
+            nearThunder = try await AudioFileResource(named: "thunder-near.wav")
+            farThunder = try await AudioFileResource(named: "thunder-far.wav")
+            audioLog.info("Concept011 audio loaded: swell, bed, near, far")
+        } catch {
+            audioLog.error("Concept011 audio failed to load: \(error.localizedDescription, privacy: .public)")
+        }
 
         audioHost.components.set(AmbientAudioComponent(gain: -6))
         root.addChild(audioHost)
@@ -190,8 +215,13 @@ fileprivate final class LivingConstellationController {
     /// Starts the swell. Its plateau begins around 4.0s, which is close to
     /// when the title reveals, so the arrival and the title land together.
     private func startIntroAudio() {
+        guard swell != nil || stormBed != nil else {
+            audioLog.error("Concept011 startIntroAudio: no resources available")
+            return
+        }
         if let swell {
             audioHost.playAudio(swell)
+            audioLog.info("Concept011 swell started")
         }
         if let stormBed {
             let bed = audioHost.playAudio(stormBed)
@@ -341,58 +371,71 @@ fileprivate final class LivingConstellationController {
     }
 
     private func animateConnectionSequence() async {
-        // The dense "hero" network is concentrated directly behind and around
-        // the title-card area so the lightning is impossible to miss
-        // in-headset. Every other dot gets a ~30% chance to throw one strike
-        // to its nearest neighbour during the sequence.
-        let hero = heroLightningConnections()
-        let ambient = ambientThirtyPercentConnections()
+        // One pool, ordered by how far each link sits from dead ahead. The
+        // storm then walks inward: early waves fire out at the edges of
+        // vision, later ones close on the centre, and the title arrives where
+        // the lightning has just converged.
+        let pool = (heroLightningConnections() + ambientThirtyPercentConnections())
+            .map { (connection: $0, offAxis: offAxisDistance(for: $0)) }
+            .sorted { $0.offAxis > $1.offAxis }          // outermost first
+            .map(\.connection)
 
-        guard !hero.isEmpty else { return }
+        guard pool.count >= 4 else { return }
 
-        // Four hero waves, down from five. Each lights a different random
-        // share of the cluster.
-        for wave in 0..<4 {
-            let waveHero = hero
+        // Each wave draws from a window that slides from the outside in.
+        // Windows overlap so the march inward reads as a drift, not a jump.
+        let windows: [(lower: Double, upper: Double)] = [
+            (0.55, 1.00),
+            (0.35, 0.80),
+            (0.15, 0.55),
+            (0.00, 0.32),
+        ]
+
+        for (wave, window) in windows.enumerated() {
+            let lower = Int(Double(pool.count) * window.lower)
+            let upper = Int(Double(pool.count) * window.upper)
+            guard upper > lower else { continue }
+
+            let slice = Array(pool[lower..<upper])
                 .shuffled()
-                .prefix(max(2, Int(Float(hero.count) * Float.random(in: 0.5...0.85))))
+                .prefix(max(2, Int(Double(upper - lower) * Double.random(in: 0.45...0.70))))
 
-            for (index, connection) in waveHero.enumerated() {
+            for (index, connection) in slice.enumerated() {
+                // Fork the nearer half richly; distant strikes read as
+                // silhouettes anyway and the forks are wasted there.
+                let isNear = wave >= 2
                 spawnLightningBolt(
                     for: connection,
                     seed: connection.seed &+ runSalt &+ wave * 211 &+ index * 19,
-                    delayMilliseconds: Int.random(in: 0...26) + index * 14,
-                    includeBranch: true
+                    delayMilliseconds: Int.random(in: 0...30) + index * 16,
+                    includeBranch: isNear || Bool.random()
                 )
             }
 
-            // Peripheral strikes split across waves so the room stays alive
-            // between hero flashes instead of everything firing at once.
-            let ambientSlice = ambient.shuffled().prefix(max(1, ambient.count / 4))
-
-            for (index, connection) in ambientSlice.enumerated() {
-                spawnLightningBolt(
-                    for: connection,
-                    seed: connection.seed &+ runSalt &+ wave * 307 &+ index * 23,
-                    delayMilliseconds: 70 + index * 26 + Int.random(in: 0...40),
-                    includeBranch: Bool.random()
-                )
-            }
-
-            try? await Task.sleep(for: .milliseconds(Int.random(in: 240...320)))
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 250...330)))
         }
 
-        // One last dense front flash immediately before the title fades in.
-        for (index, connection) in hero.shuffled().enumerated() {
+        // Final flash on the innermost quarter, immediately before the title.
+        let core = Array(pool.suffix(max(2, pool.count / 4))).shuffled()
+        for (index, connection) in core.enumerated() {
             spawnLightningBolt(
                 for: connection,
                 seed: connection.seed &+ runSalt &+ 9001 &+ index * 31,
-                delayMilliseconds: index * 10,
+                delayMilliseconds: index * 12,
                 includeBranch: true
             )
         }
 
-        try? await Task.sleep(for: .milliseconds(180))
+        try? await Task.sleep(for: .milliseconds(200))
+    }
+
+    /// How far a connection sits from straight ahead, in metres.
+    ///
+    /// Measured against the point directly in front of the viewer on the
+    /// dome, so "inward" means toward where the title will appear.
+    private func offAxisDistance(for connection: ConstellationConnection) -> Float {
+        let ahead = SIMD3<Float>(0, DomeLayout.defaultEyeLevel, -1.6)
+        return simd_distance(connection.midpoint, ahead)
     }
 
     private func startIdleBlueBreathing() {
@@ -457,73 +500,119 @@ fileprivate final class LivingConstellationController {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(delayMilliseconds))
 
-            // The strike follows the shape of the pixel-art reference: a
-            // flickering leader, a bright return stroke, then a fade that
-            // breaks the channel into fragments. Dimming uniformly from a
-            // single static bolt is what made the old version read as a
-            // drawn line rather than a discharge.
+            // One strike at a time per connection. Overlapping strikes on the
+            // same pair of dots just read as a brighter static shape, which is
+            // the opposite of what they are for.
+            guard !activeConnections.contains(connection.seed) else { return }
+            activeConnections.insert(connection.seed)
+            defer { activeConnections.remove(connection.seed) }
 
-            // Leader: coarse path, no forks, dim. Appears and vanishes before
-            // the eye resolves it, which is what makes the main stroke land.
-            let leader = makeLightningBolt(
-                for: connection,
-                seed: seed,
-                includeBranch: false,
-                intensity: 0.4,
-                depth: 2
-            )
-            root.addChild(leader)
-            try? await Task.sleep(for: .milliseconds(Int.random(in: 20...34)))
-            leader.removeFromParent()
-            try? await Task.sleep(for: .milliseconds(Int.random(in: 14...28)))
+            // --- Competing leaders -------------------------------------
+            // A real strike puts out several probing branches and abandons
+            // all but the one that arrives first. Running a single leader
+            // down the final path, as this did before, has it backwards: the
+            // winner is only known in hindsight.
+            let contenders = makeLeaders(for: connection, seed: seed)
+            for leader in contenders.entities {
+                root.addChild(leader)
+            }
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 30...44)))
 
-            // Return stroke: full subdivision, forks, full intensity.
-            let bolt = makeLightningBolt(
+            // All but the winner die. The survivor is the one that got
+            // nearest the target, which is the physical criterion too.
+            for (index, leader) in contenders.entities.enumerated() where index != contenders.winner {
+                leader.removeFromParent()
+            }
+            try? await Task.sleep(for: .milliseconds(Int.random(in: 12...20)))
+            contenders.entities[contenders.winner].removeFromParent()
+
+            // --- Return stroke -----------------------------------------
+            let bolt = makeBoltShapes(
                 for: connection,
                 seed: seed,
                 includeBranch: includeBranch,
                 intensity: 1
             )
-            // A hot point where the channel attaches. In the reference art the
-            // bolt leaves a glowing source rather than simply starting.
-            addSourceFlash(at: connection.start, to: bolt)
-            root.addChild(bolt)
-            // Branching strikes are the hero ones, so they get the near crack.
-            playThunder(on: bolt, near: includeBranch)
+            addSourceFlash(at: connection.start, to: bolt.root)
+            root.addChild(bolt.root)
+            playThunder(on: bolt.root, near: includeBranch)
 
-            // Hold the brightest frame just long enough to register.
-            try? await Task.sleep(for: .milliseconds(Int.random(in: 28...46)))
-
-            // Re-strikes. A real channel fires several times down roughly the
-            // same path, each a little different — that flicker is as much of
-            // the organic feel as the geometry is, and a single static stroke
-            // is what makes one look drawn.
-            let restrikes = Int.random(in: 1...2)
-            for strike in 0..<restrikes {
-                let repeated = makeLightningBolt(
-                    for: connection,
-                    seed: seed &+ 5100 &+ strike * 71,
-                    includeBranch: includeBranch && strike == 0,
-                    intensity: 0.85
-                )
-                root.addChild(repeated)
-                bolt.components.set(OpacityComponent(opacity: 0.35))
-                try? await Task.sleep(for: .milliseconds(Int.random(in: 22...34)))
-                repeated.removeFromParent()
-                bolt.components.set(OpacityComponent(opacity: 1))
-                try? await Task.sleep(for: .milliseconds(Int.random(in: 14...24)))
+            // --- Writhe ------------------------------------------------
+            // Cycle shapes at roughly 20Hz while the channel is lit. This is
+            // the cheap half of looking alive: the geometry is already built,
+            // so each step is two `isEnabled` writes.
+            let litSteps = Int.random(in: 5...8)
+            for step in 0..<litSteps {
+                bolt.show(step % bolt.shapes.count)
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 42...58)))
             }
 
-            // Decay. Each step dims the whole bolt and kills more of its
-            // segments, so the channel comes apart as it dies.
-            for remaining in [0.7, 0.45, 0.22, 0.0] as [Float] {
-                bolt.components.set(OpacityComponent(opacity: remaining))
-                fragmentBolt(bolt, keeping: remaining, seed: seed &+ Int(remaining * 1000))
-                try? await Task.sleep(for: .milliseconds(Int.random(in: 22...34)))
+            // --- Decay -------------------------------------------------
+            for remaining in [0.62, 0.34, 0.14, 0.0] as [Float] {
+                bolt.root.components.set(OpacityComponent(opacity: remaining))
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 20...30)))
             }
 
-            bolt.removeFromParent()
+            bolt.root.removeFromParent()
         }
+    }
+
+    /// Several short probing leaders from the strike's origin, plus which one
+    /// wins.
+    ///
+    /// Each heads roughly toward the target but with a wide angular spread
+    /// and a short reach, so they fan out. The winner is whichever ends up
+    /// closest to the target.
+    private func makeLeaders(
+        for connection: ConstellationConnection,
+        seed: Int
+    ) -> (entities: [Entity], winner: Int) {
+        let count = Int.random(in: 3...5)
+        let span = connection.end - connection.start
+        let distance = simd_length(span)
+        guard distance > 1e-5 else { return ([], 0) }
+
+        let forward = simd_normalize(span)
+        let basis = orthonormalBasis(for: forward)
+
+        var entities: [Entity] = []
+        var bestIndex = 0
+        var bestDistance = Float.greatestFiniteMagnitude
+
+        for index in 0..<count {
+            // Fan of up to ~40 degrees, reaching 45-80% of the way across.
+            let angle = Float.random(in: -0.70...0.70)
+            let roll = Float.random(in: 0..<(2 * .pi))
+            let lateral = basis.right * cos(roll) + basis.up * sin(roll)
+            let direction = simd_normalize(forward * cos(angle) + lateral * sin(angle))
+            let reach = distance * Float.random(in: 0.45...0.80)
+            let tip = connection.start + direction * reach
+
+            let gap = simd_distance(tip, connection.end)
+            if gap < bestDistance {
+                bestDistance = gap
+                bestIndex = index
+            }
+
+            let probe = Entity()
+            let points = displacedBoltPath(
+                from: connection.start,
+                to: tip,
+                seed: seed &+ 3300 &+ index * 47,
+                depth: 2,
+                roughness: 0.17
+            )
+            addChannel(
+                points: points,
+                to: probe,
+                intensity: 0.30,
+                widthSeed: seed &+ 3400 &+ index,
+                slim: true
+            )
+            entities.append(probe)
+        }
+
+        return (entities, bestIndex)
     }
 
     /// A bright point with a soft halo where a bolt attaches. Scaled to the
@@ -544,13 +633,6 @@ fileprivate final class LivingConstellationController {
         parent.addChild(halo)
     }
 
-    /// Disables a growing random share of a bolt's segments so it breaks into
-    /// pieces as it fades rather than dimming as one solid line.
-    private func fragmentBolt(_ bolt: Entity, keeping fraction: Float, seed: Int) {
-        for (index, segment) in bolt.children.enumerated() {
-            segment.isEnabled = hashUnit(seed: seed, step: index) < fraction
-        }
-    }
 
     private func animatePulse(on connection: ConstellationConnection) {
         let pulse = ModelEntity(
@@ -585,92 +667,254 @@ fileprivate final class LivingConstellationController {
         }
     }
 
-    private func makeLightningBolt(
+    // MARK: Ribbon rendering
+
+    /// Soft-edged falloff texture for the bolt ribbons, built once.
+    ///
+    /// The falloff is written into **both** luminance and alpha. Alpha alone
+    /// would depend on how `UnlitMaterial` blends a textured tint; luminance
+    /// alone is enough here anyway, because the space is pitch black, so a
+    /// ribbon fading to black reads as fading to nothing.
+    /// `@ObservationIgnored` so it stays a stored property — `@Observable`
+    /// rewrites stored properties into computed ones, and `lazy` cannot apply
+    /// to a computed property.
+    @ObservationIgnored
+    private lazy var ribbonTexture: TextureResource? = {
+        let width = 64
+        let height = 4
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        for x in 0..<width {
+            // Gaussian across the ribbon's width: opaque white core, falling
+            // to transparent black at both edges.
+            let u = (Double(x) / Double(width - 1)) * 2 - 1
+            let v = exp(-u * u * 5.5)
+            context.setFillColor(red: v, green: v, blue: v, alpha: v)
+            context.fill(CGRect(x: x, y: 0, width: 1, height: height))
+        }
+
+        guard let image = context.makeImage() else { return nil }
+        return try? TextureResource.generate(from: image, options: .init(semantic: .color))
+    }()
+
+    /// Builds a viewer-facing ribbon along a path.
+    ///
+    /// This is *cylindrical billboarding*: each quad faces the viewer but
+    /// rotates only about the beam's own axis, so the strip stays continuous.
+    /// Billboarding each quad freely — the obvious approach — pivots them
+    /// about their own centres and tears the chain apart.
+    ///
+    /// Two things make it cheap. The viewer sits at the dome's centre by
+    /// construction, so the view direction is `domeCenter - point` and no
+    /// head-pose query is needed. And a bolt lives about 250ms, far too short
+    /// for the viewer to move enough to break the illusion, so the ribbon is
+    /// oriented once at spawn and never updated.
+    ///
+    /// One ribbon replaces a per-segment stack of cylinders: a channel that
+    /// cost 64 entities is now 1 mesh, which is what makes reshaping during
+    /// the strike affordable at all.
+    private func ribbonEntity(
+        points: [SIMD3<Float>],
+        halfWidth: Float,
+        taperTo: Float,
+        color: UIColor,
+        opacity: Float,
+        widthSeed: Int
+    ) -> ModelEntity? {
+        guard points.count >= 2, let texture = ribbonTexture else { return nil }
+
+        var positions: [SIMD3<Float>] = []
+        var uvs: [SIMD2<Float>] = []
+        positions.reserveCapacity(points.count * 2)
+        uvs.reserveCapacity(points.count * 2)
+
+        let lastIndex = Float(points.count - 1)
+
+        for (index, point) in points.enumerated() {
+            let t = Float(index) / lastIndex
+
+            // Average the directions either side so the strip does not kink
+            // at the joints.
+            let ahead = points[min(index + 1, points.count - 1)]
+            let behind = points[max(index - 1, 0)]
+            var axis = ahead - behind
+            axis = simd_length(axis) > 1e-6 ? simd_normalize(axis) : SIMD3<Float>(0, 1, 0)
+
+            let toViewer = viewerPosition - point
+            var side = simd_cross(axis, simd_length(toViewer) > 1e-6 ? simd_normalize(toViewer) : SIMD3<Float>(0, 0, 1))
+            if simd_length(side) < 1e-6 {
+                // Degenerate only when the channel points straight at the
+                // viewer; any perpendicular will do.
+                side = simd_cross(axis, SIMD3<Float>(0, 1, 0))
+            }
+            side = simd_normalize(side)
+
+            let jitter = 0.84 + hashUnit(seed: widthSeed, step: 600 + index) * 0.32
+            let width = halfWidth * (1 - (1 - taperTo) * t) * jitter
+
+            positions.append(point - side * width)
+            positions.append(point + side * width)
+            uvs.append(SIMD2<Float>(0, t))
+            uvs.append(SIMD2<Float>(1, t))
+        }
+
+        var indices: [UInt32] = []
+        indices.reserveCapacity((points.count - 1) * 12)
+        for index in 0..<(points.count - 1) {
+            let a = UInt32(index * 2)
+            // Both windings, so the ribbon is visible whichever way the
+            // normal ends up facing.
+            indices += [a, a + 1, a + 2, a + 1, a + 3, a + 2]
+            indices += [a + 2, a + 1, a, a + 2, a + 3, a + 1]
+        }
+
+        var descriptor = MeshDescriptor(name: "bolt-ribbon")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
+        descriptor.primitives = .triangles(indices)
+
+        guard let mesh = try? MeshResource.generate(from: [descriptor]) else { return nil }
+
+        var material = UnlitMaterial()
+        material.color = .init(tint: color, texture: .init(texture))
+        material.blending = .transparent(opacity: .init(floatLiteral: opacity))
+        return ModelEntity(mesh: mesh, materials: [material])
+    }
+
+    /// One strike's geometry, pre-built as several interchangeable shapes.
+    ///
+    /// Real channels writhe continuously while they are lit. Rebuilding the
+    /// mesh every frame to achieve that would be wasteful, so instead a few
+    /// complete shapes are built once at spawn and the strike cycles which
+    /// one is visible. Reshaping then costs a pair of `isEnabled` writes
+    /// rather than a mesh build.
+    private struct BoltShapes {
+        let root: Entity
+        let shapes: [Entity]
+
+        func show(_ index: Int) {
+            for (i, shape) in shapes.enumerated() {
+                shape.isEnabled = (i == index)
+            }
+        }
+    }
+
+    /// Builds a strike as `variantCount` alternative shapes between the same
+    /// endpoints.
+    private func makeBoltShapes(
         for connection: ConstellationConnection,
         seed: Int,
         includeBranch: Bool,
         intensity: Float = 1,
-        depth: Int = 4
-    ) -> Entity {
-        let bolt = Entity()
-        let points = displacedBoltPath(
-            from: connection.start,
-            to: connection.end,
-            seed: seed,
-            depth: depth
-        )
-        addBoltSegments(points: points, to: bolt, intensity: intensity, widthSeed: seed)
+        depth: Int = 4,
+        variantCount: Int = 3
+    ) -> BoltShapes {
+        let root = Entity()
+        var shapes: [Entity] = []
+
+        // Only the main channel gets alternative shapes. Forks are built once
+        // and shared across all of them: mesh generation is the expensive part
+        // of a spawn, and multiplying a dozen fork ribbons by the variant
+        // count is most of that cost for very little visible gain — the eye
+        // tracks the main channel's movement, not each filament's.
+        for variant in 0..<max(1, variantCount) {
+            let shape = Entity()
+            let variantSeed = seed &+ variant * 613
+
+            let points = displacedBoltPath(
+                from: connection.start,
+                to: connection.end,
+                seed: variantSeed,
+                depth: depth
+            )
+            addChannel(points: points, to: shape, intensity: intensity, widthSeed: variantSeed)
+
+            shape.isEnabled = (variant == 0)
+            root.addChild(shape)
+            shapes.append(shape)
+        }
 
         if includeBranch {
-            // Vary how heavily forked each strike is. A storm where every bolt
-            // carries the same fork tree reads as a repeated asset, which is
-            // the thing this whole pass is trying to avoid.
+            // Forks hang off the first variant's path, which is the one the
+            // strike opens on.
+            let basePoints = displacedBoltPath(
+                from: connection.start,
+                to: connection.end,
+                seed: seed,
+                depth: depth
+            )
+            // Vary fork density per strike; a storm where every bolt carries
+            // the same tree reads as a repeated asset.
             let generations = hashUnit(seed: seed, step: 77) < 0.45 ? 2 : 1
 
             for (branchIndex, branch) in boltBranches(
-                along: points,
+                along: basePoints,
+                towards: connection.end,
                 seed: seed,
                 generation: generations,
                 intensity: intensity
             ).enumerated() {
-                addBoltSegments(
+                addChannel(
                     points: branch.points,
-                    to: bolt,
+                    to: root,
                     intensity: branch.intensity,
-                    slim: true,
-                    widthSeed: seed &+ 7000 &+ branchIndex * 13
+                    widthSeed: seed &+ 7000 &+ branchIndex * 13,
+                    slim: true
                 )
             }
         }
 
-        return bolt
+        return BoltShapes(root: root, shapes: shapes)
     }
 
-    /// Draws a path as a tapering channel of nested tiers.
+    /// Draws one channel as a pair of ribbons: a wide soft glow and a tight
+    /// bright core.
     ///
-    /// Two things here matter more than the tier radii, and their absence is
-    /// why earlier passes still read as line art:
-    ///
-    /// **Taper.** A real channel is widest where it attaches and narrows
-    /// toward the tip. Every segment being the same width is the strongest
-    /// single cue that something was drawn rather than discharged.
-    ///
-    /// **Per-segment variation.** Tapering uniformly still looks machined, so
-    /// each segment's width is jittered around the taper curve.
-    private func addBoltSegments(
+    /// Two meshes, where the cylinder version needed four stacked tubes per
+    /// segment. The soft edge now comes from the texture's falloff rather
+    /// than from nested geometry, which is what a cylinder could never do —
+    /// its edge is geometric and always hard.
+    private func addChannel(
         points: [SIMD3<Float>],
         to parent: Entity,
         intensity: Float,
-        slim: Bool = false,
-        widthSeed: Int = 0
+        widthSeed: Int,
+        slim: Bool = false
     ) {
-        guard points.count >= 2 else { return }
+        let glowWidth: Float = slim ? 0.0075 : 0.022
+        let coreWidth: Float = slim ? 0.0013 : 0.0034
 
-        let tiers = slim ? forkTiers : boltTiers
-        let lastIndex = Float(max(points.count - 2, 1))
+        if let glow = ribbonEntity(
+            points: points,
+            halfWidth: glowWidth,
+            taperTo: slim ? 0.3 : 0.4,
+            color: brandBlue,
+            opacity: (slim ? 0.16 : 0.26) * intensity,
+            widthSeed: widthSeed
+        ) {
+            parent.addChild(glow)
+        }
 
-        for index in 0..<(points.count - 1) {
-            let start = points[index]
-            let end = points[index + 1]
-
-            let t = Float(index) / lastIndex
-            // Forks taper harder, so they thin to filaments rather than
-            // stopping abruptly.
-            let taper = 1 - (slim ? 0.68 : 0.60) * t
-            let jitter = 0.84 + hashUnit(seed: widthSeed, step: 500 + index) * 0.32
-            let width = taper * jitter
-
-            for tier in tiers {
-                parent.addChild(lineEntity(
-                    from: start,
-                    to: end,
-                    color: tier.color,
-                    opacity: tier.opacity * intensity,
-                    radius: tier.radius * width
-                ))
-            }
+        if let core = ribbonEntity(
+            points: points,
+            halfWidth: coreWidth,
+            taperTo: slim ? 0.28 : 0.38,
+            color: slim ? boltCyan : coreWhite,
+            opacity: (slim ? 0.5 : 0.72) * intensity,
+            widthSeed: widthSeed &+ 31
+        ) {
+            parent.addChild(core)
         }
     }
+
 
     /// Builds a bolt path by **recursive midpoint displacement**: displace a
     /// segment's midpoint perpendicular by a random amount, then recurse on
@@ -774,6 +1018,7 @@ fileprivate final class LivingConstellationController {
     /// performance problem long before it is a visual one.
     private func boltBranches(
         along points: [SIMD3<Float>],
+        towards target: SIMD3<Float>,
         seed: Int,
         generation: Int,
         intensity: Float
@@ -809,7 +1054,15 @@ fileprivate final class LivingConstellationController {
             // Spread forks around the channel rather than confining them to
             // one plane, which looks flat from the side in a 360 space.
             let lateral = basis.right * cos(roll) + basis.up * sin(roll)
-            let direction = simd_normalize(forward * cos(angle) + lateral * side * sin(angle))
+            var direction = simd_normalize(forward * cos(angle) + lateral * side * sin(angle))
+
+            // Lean toward the far endpoint. Real forks still head broadly
+            // where the discharge is going; without this bias they wander off
+            // sideways and the bolt loses its sense of travelling somewhere.
+            let toTarget = target - origin
+            if simd_length(toTarget) > 1e-5 {
+                direction = simd_normalize(direction * 0.68 + simd_normalize(toTarget) * 0.32)
+            }
 
             let remaining = simd_distance(origin, points[points.count - 1])
             // Each generation is a shorter stub than the last, so the fork
@@ -828,6 +1081,7 @@ fileprivate final class LivingConstellationController {
             result.append(BoltBranch(points: childPoints, intensity: childIntensity))
             result.append(contentsOf: boltBranches(
                 along: childPoints,
+                towards: target,
                 seed: seed &+ 2300 &+ fork * 17,
                 generation: generation - 1,
                 intensity: childIntensity
