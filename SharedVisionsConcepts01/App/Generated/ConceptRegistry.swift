@@ -152,6 +152,16 @@ struct ConceptRegistry {
         description: "Interview playback with an AVPlayer-backed spatial panel and head-relative captions. Before real footage is bundled, the panel runs a simple animated 1/2/3 stock visual synchronized to the three sample lines of dialogue, then loops, so timing and caption behavior are easy to review.",
         success: true,
         makeView: { AnyView(Concept015()) }
+    ),
+    Concept(
+        title: "Concept 020",
+        type: .SPACE,
+        date: Date("11/10/2026"),
+        isFeatured: true,
+        subtitle: "People, Simply",
+        description: "A blend of 012 and 013: floating circular portraits with one SwiftUI attachment per person. Look at a portrait to reveal colorful tags, then tap for a details card positioned above or below that person. Filter the field by role. The details card is faked as an attachment that is reused on tap.",
+        success: true,
+        makeView: { AnyView(Concept020()) }
     )
     ]
 
