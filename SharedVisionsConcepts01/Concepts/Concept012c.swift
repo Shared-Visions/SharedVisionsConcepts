@@ -1,16 +1,16 @@
 //  Shared Visions Concepts
 //
-//  Title: Concept012
+//  Title: Concept012c
 //
 //  Subtitle: Interview Chooser Dome
 //
-//  Description: Reinterprets the "choose interview" comp for visionOS, revised against the design team's 21 Oct workshop screenshots. A persistent documentary window carries its own title frame and sits nearer the viewer than everything else, with person orbs — a persona portrait suspended inside a small sphere of water — floating all around it on a wide dome rather than a flat grid. Each face is lifted out of its photographic background with Vision's foreground-instance mask and layered in depth inside the sphere, so it reads as a spatial persona rather than a flat snapshot. Each person carries a cluster of flat app-icon bubbles instead of colour dots. Role filtering and the Community/Applications switch moved off the video window into a floating "Interview Universe" panel at the same depth as the faces, selecting a person opens a detail overlay in the same visual language, and three live sliders (video size, bubble size, field of view) let the proportions be tuned in-headset. Pinching an orb sends a traveling ripple across its water surface from the point you touched.
+//  Description: The 012b chooser dome revised against the next round of design feedback. The dome is pulled in tight: the field of view now tops out at 180 degrees so nobody sits behind the viewer's shoulders, and the spacing between orbs is cut by a quarter so the community reads as a crowd rather than a scattering. The blue-green tint is off the water, leaving neutral spheres whose only colour is the selected person's own accent. Selecting someone no longer opens a panel off to the side with a second copy of their photo in it — the profile unfurls downward out of the bubble you tapped, anchored to that orb on the dome, and the face inside the bubble stays the only picture of that person on screen. Everything else carries over from 012b: the persistent documentary window nearer the viewer than the dome, Vision-lifted portraits layered in depth inside each sphere, app-category bubbles on the app icon's hexagon, working Community and Applications filters, and the in-headset tuning sliders.
 //
 //  Type: Space
 //
 //  Featured: true
 //
-//  Created by Kiro on 9/23/26.
+//  Created by Kiro on 11/5/26.
 
 import SwiftUI
 import RealityKit
@@ -212,17 +212,21 @@ fileprivate struct DesignTuning {
     var bubbleScale: Double = 1.4
 
     /// Total horizontal arc, in degrees, that the dome of faces spans.
-    /// Defaults wide so the community reads as surrounding the video rather
-    /// than sitting in a panel beside it.
-    var fieldOfViewDegrees: Double = 200
+    ///
+    /// 012b defaulted to 200°, which put people roughly 10° past each
+    /// shoulder — the feedback was to keep the dome "more like 180 degrees
+    /// within your field of view", with nobody behind the viewer. 180° puts
+    /// the outermost faces exactly at the shoulder line, and the slider in
+    /// `TuningPanel` is capped there so the dome can only be narrowed.
+    var fieldOfViewDegrees: Double = 180
 
     var videoWidth: CGFloat { DesignTuning.baseVideoSize.width * CGFloat(videoScale) }
     var videoHeight: CGFloat { DesignTuning.baseVideoSize.height * CGFloat(videoScale) }
 }
 
-// MARK: - Concept012
+// MARK: - Concept012c
 
-struct Concept012: View {
+struct Concept012c: View {
 
     @State private var selectedRole: Role? = nil
     /// The Applications-mode counterpart to `selectedRole`. Kept separate
@@ -251,11 +255,38 @@ struct Concept012: View {
     /// to `domeRadius` so it shares a depth with the faces.
     private let filterPanelDrop: Float = 0.45
 
-    /// Where the selection overlay sits: yawed off to the right at the same
-    /// dome depth as the faces, clear of both the documentary window in the
-    /// centre and the filter panel below it.
-    private let selectionPanelYaw: Float = 34
-    private let selectionPanelDrop: Float = 0.16
+    /// Where the selection overlay sits: directly on the tapped orb, pulled
+    /// `selectionPanelLift` meters in from the dome surface so it floats in
+    /// front of its own bubble and the bubbles either side of it. 012b yawed
+    /// it 34° off to the right instead; the feedback was that the profile
+    /// should expand out of the bubble itself.
+    private let selectionPanelLift: Float = 0.07
+
+    /// The water sphere's own radius, mirrored from `WaterOrbController` so
+    /// the selection panel can be placed clear of the bubble it grows out of.
+    private static let orbSphereRadius: Float = 0.05
+
+    /// Half the selection panel's height in metres.
+    ///
+    /// The attachment is positioned by its centre, so hanging it under the
+    /// bubble needs its half-height. RealityKit renders SwiftUI attachments
+    /// at 1360 points per metre on visionOS; the panel measures roughly 300
+    /// points tall, which is 0.22 m, so half of that is 0.11 m. Approximate
+    /// on purpose — the panel's height depends on how many app capsules a
+    /// person carries, and this only has to keep it off the face.
+    private static let selectionPanelHalfHeight: Float = 0.11
+
+    /// Vertical arc as a fraction of the horizontal arc.
+    ///
+    /// 012b used 0.46, which at its 200° default gave a 200°×92° field. The
+    /// feedback was that the bubbles sat too far apart and wanted the gaps
+    /// cut by 25%. Angular spacing on a dome goes as the square root of
+    /// (arc area ÷ count), so a 25% tighter dome needs 0.75² = 0.5625 of the
+    /// arc product. Dropping to 180° horizontal already takes out some of
+    /// it; 180° × (180 × 0.32) = 10,368 against 012b's 200 × 92 = 18,400,
+    /// which is 0.563 — the quarter reduction, with the horizontal cap
+    /// respected rather than fought.
+    private static let verticalArcRatio: Float = 0.32
 
     /// How far, in meters, the headshot is pushed away from the viewer so a
     /// rim of water sits in front of the face instead of the photo filling
@@ -285,16 +316,34 @@ struct Concept012: View {
         return SIMD3<Float>(0, DomeLayout.defaultEyeLevel - filterPanelDrop, -depth)
     }
 
-    /// Same dome-surface solve as the filter panel, then yawed to the right
-    /// so the profile opens beside the documentary rather than over it.
+    /// The selection panel is anchored to the orb it belongs to, so the
+    /// profile expands out of the bubble the viewer tapped instead of
+    /// appearing in a fixed slot beside the documentary.
+    ///
+    /// The orb's resting dome position is used rather than its live
+    /// transform: the float controller gives every orb a slow bob, and a
+    /// 420pt panel inheriting that bob reads as drift rather than buoyancy.
     private var selectionPanelPosition: SIMD3<Float> {
-        let horizontalRadius = sqrt(max(domeRadius * domeRadius - selectionPanelDrop * selectionPanelDrop, 0.01))
-        let yaw = selectionPanelYaw * .pi / 180
-        return SIMD3<Float>(
-            sin(yaw) * horizontalRadius,
-            DomeLayout.defaultEyeLevel - selectionPanelDrop,
-            -cos(yaw) * horizontalRadius
-        )
+        guard let selectedPersonID,
+              let index = mockPeople.firstIndex(where: { $0.id == selectedPersonID }) else {
+            // Nothing selected, or mid-dismiss. The entity is disabled in
+            // this state, but parking it on the dome ahead keeps it off the
+            // origin — which is on the floor between the viewer's feet.
+            return SIMD3<Float>(0, DomeLayout.defaultEyeLevel, -domeRadius)
+        }
+
+        let orbPosition = domePositions()[index]
+        let fromCenter = orbPosition - domeCenter
+        let lifted = (domeRadius - selectionPanelLift) / domeRadius
+        var position = domeCenter + fromCenter * lifted
+
+        // Hang the panel below its bubble so the face stays the thing you
+        // look at while the profile unfurls under it. The clearance tracks
+        // `bubbleScale` because that slider changes the sphere's radius, and
+        // a panel sized for 1.0 cuts across the face at 2.0.
+        let sphereClearance = Self.orbSphereRadius * Float(tuning.bubbleScale)
+        position.y -= sphereClearance + Self.selectionPanelHalfHeight + 0.02
+        return position
     }
 
     /// Whichever filter the current mode owns.
@@ -359,16 +408,17 @@ struct Concept012: View {
             Attachment(id: "selectionPanel") {
                 // Built against the last selected person so the panel keeps
                 // its content through the dismiss transition instead of
-                // emptying out as it fades.
+                // emptying out as it fades. The `id` forces a fresh view
+                // when the selection moves to a different person, so the
+                // expand animation replays out of the newly tapped bubble
+                // instead of the panel simply swapping its text.
                 if let person = selectedPerson {
-                    PersonSelectionOverlay(
-                        person: person,
-                        portrait: portraitStore.portrait(for: person)
-                    ) {
+                    ExpandingSelectionPanel(person: person) {
                         isVideoVisible = true
                     } onClose: {
                         selectedPersonID = nil
                     }
+                    .id(person.id)
                 }
             }
         }
@@ -432,7 +482,7 @@ struct Concept012: View {
     /// faces around the viewer instead of stretching them into a thin band.
     private func domePositions() -> [SIMD3<Float>] {
         let horizontalArc = Float(tuning.fieldOfViewDegrees)
-        let verticalArc = max(40, horizontalArc * 0.46)
+        let verticalArc = max(40, horizontalArc * Self.verticalArcRatio)
 
         return DomeLayout.positions(
             count: mockPeople.count,
@@ -558,9 +608,10 @@ struct Concept012: View {
             panelAttachment.isEnabled = selectedPersonID != nil
             panelAttachment.position = selectionPanelPosition
             if panelAttachment.parent == nil {
-                // Yawed off-centre, so without billboarding it would present
-                // at an angle to the viewer. Set once on insert rather than
-                // every update, since it never changes.
+                // The panel now sits on whichever orb is selected, anywhere
+                // across the dome, so it is off-centre by construction and
+                // would present at an angle without billboarding. Set once
+                // on insert; the behaviour never changes, only the position.
                 panelAttachment.components.set(BillboardComponent())
                 content.add(panelAttachment)
             }
@@ -717,6 +768,13 @@ fileprivate final class WaterOrbController {
     private var elapsedTime: Float = 0
     private let sphereRadius: Float = 0.05
 
+    /// Neutral water. 012b used `WaterSphereMaterial`'s blue-green default,
+    /// and the feedback on that round was to get the tint off the bubbles —
+    /// so the only colour on an orb now comes from the person's own accent
+    /// when they are selected. Kept just off white so the sphere still has a
+    /// surface to catch highlights on rather than vanishing into the room.
+    private let waterTint = UIColor(white: 0.78, alpha: 1.0)
+
     /// Creates the water sphere entity for a person's orb. Named "GlassSphere"
     /// (matching the original asset's part name) so existing input-target /
     /// hover-effect / tap-lookup code elsewhere in this file keeps working
@@ -726,7 +784,7 @@ fileprivate final class WaterOrbController {
         let resource = try? mesh.generate(ripples: [], elapsedTime: 0)
         let entity = ModelEntity(
             mesh: resource ?? .generateSphere(radius: sphereRadius),
-            materials: [WaterSphereMaterial.make()]
+            materials: [WaterSphereMaterial.make(tint: waterTint)]
         )
         entity.name = "GlassSphere"
         entity.components.set(InputTargetComponent())
@@ -1225,22 +1283,20 @@ fileprivate struct RoleFilterChip: View {
 /// other half — what selecting someone actually gets you — and deliberately
 /// borrows that panel's title/subtitle/close layout so the two read as one
 /// family rather than two unrelated windows.
+///
+/// No portrait. 012b opened with a 104pt `PersonaPortrait` at the top left,
+/// which meant the same person's face was on screen twice — once in their
+/// bubble and once in the panel. The feedback was that there should only be
+/// one picture of a person, and the bubble's is the one that is already
+/// spatial, so the panel carries their name and work instead.
 fileprivate struct PersonSelectionOverlay: View {
     let person: Person
-    let portrait: UIImage?
     let onWatch: () -> Void
     let onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 18) {
-                PersonaPortrait(
-                    person: person,
-                    portrait: portrait,
-                    isSelected: true,
-                    diameter: 104
-                )
-
                 VStack(alignment: .leading, spacing: 4) {
                     Text(person.name)
                         .font(SharedVisionsFont.semiBold(.title2))
@@ -1248,7 +1304,6 @@ fileprivate struct PersonSelectionOverlay: View {
                         .font(SharedVisionsFont.medium(.callout))
                         .foregroundStyle(.secondary)
                 }
-                .padding(.top, 8)
 
                 Spacer()
 
@@ -1297,6 +1352,39 @@ fileprivate struct PersonSelectionOverlay: View {
     }
 }
 
+/// Grows `PersonSelectionOverlay` out of the bubble it belongs to.
+///
+/// The feedback asked for the panel to animate open from inside the bubble
+/// rather than appearing beside it. The attachment entity is already hung
+/// just under the selected orb (see `selectionPanelPosition`), so the motion
+/// itself is done here in SwiftUI: the panel starts at a few percent scale,
+/// anchored at its own top edge, and springs out to full size — so the growth
+/// originates at the bubble's lower edge and unfurls downward.
+///
+/// Only `scaleEffect` and `opacity` are used, both render-time transforms
+/// that stay inside the view's layout bounds. A SwiftUI `offset` would push
+/// content outside the bounds RealityKit sized the attachment to, where it
+/// risks being clipped; the equivalent displacement is done in metres on the
+/// entity instead.
+fileprivate struct ExpandingSelectionPanel: View {
+    let person: Person
+    let onWatch: () -> Void
+    let onClose: () -> Void
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        PersonSelectionOverlay(person: person, onWatch: onWatch, onClose: onClose)
+            .scaleEffect(isExpanded ? 1 : 0.04, anchor: .top)
+            .opacity(isExpanded ? 1 : 0)
+            .onAppear {
+                withAnimation(.spring(response: 0.42, dampingFraction: 0.76)) {
+                    isExpanded = true
+                }
+            }
+    }
+}
+
 // MARK: - Prototype Tuning
 
 /// Lives in the scene's bottom ornament — the slot the mode switch used to
@@ -1318,7 +1406,11 @@ fileprivate struct TuningPanel: View {
             TuningSlider(
                 title: "Field of view",
                 value: $tuning.fieldOfViewDegrees,
-                range: 90...300,
+                // Capped at 180 rather than 012b's 300: past 180 the dome
+                // wraps behind the viewer's shoulders, which the feedback
+                // ruled out. The slider can narrow the dome, not widen it
+                // past the brief.
+                range: 90...180,
                 unit: "°",
                 fractionLength: 0
             )
@@ -1361,5 +1453,5 @@ fileprivate struct TuningSlider: View {
 }
 
 #Preview {
-    Concept012()
+    Concept012c()
 }

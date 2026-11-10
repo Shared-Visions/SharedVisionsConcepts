@@ -11,6 +11,10 @@ struct ParsedConcept {
     let structName: String
     let isFeatured: Bool
     let success: Bool
+    /// Concept number parsed from the title, when the title follows the "Concept NNN" shape.
+    let number: Int?
+    /// Optional letter suffix for variants of the same concept, e.g. the "b" in "Concept 012b".
+    let suffix: String
 }
 
 func firstMatch(in text: String, pattern: String) -> String? {
@@ -27,19 +31,35 @@ func firstMatch(in text: String, pattern: String) -> String? {
     return slashTrimmed.isEmpty ? nil : value
 }
 
-func normalizedTitle(from raw: String?, structName: String) -> (title: String, number: Int?) {
+func matchGroups(in text: String, pattern: String, groups: Int) -> [String]? {
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+        return nil
+    }
+    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+    guard let match = regex.firstMatch(in: text, options: [], range: range),
+          match.numberOfRanges > groups else {
+        return nil
+    }
+    return (1...groups).map { index in
+        guard let range = Range(match.range(at: index), in: text) else { return "" }
+        return String(text[range])
+    }
+}
+
+func normalizedTitle(from raw: String?, structName: String) -> (title: String, number: Int?, suffix: String) {
     let candidates = [raw, structName]
     for candidate in candidates.compactMap({ $0 }) {
         let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let match = firstMatch(in: trimmed, pattern: "Concept\\s*0*([0-9]+)") {
-            if let number = Int(match) {
-                let title = String(format: "Concept %03d", number)
-                return (title, number)
-            }
+        // A concept may carry a letter suffix to mark a variant: Concept012b, Concept012c.
+        if let groups = matchGroups(in: trimmed, pattern: "Concept\\s*0*([0-9]+)([a-zA-Z]?)", groups: 2),
+           let number = Int(groups[0]) {
+            let suffix = groups[1].lowercased()
+            let title = String(format: "Concept %03d", number) + suffix
+            return (title, number, suffix)
         }
     }
     let fallback = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? structName
-    return (fallback, nil)
+    return (fallback, nil, "")
 }
 
 func normalizedDate(_ raw: String?) -> String {
@@ -111,7 +131,9 @@ func parseConcept(from content: String, fileName: String) -> ParsedConcept? {
         dateString: dateString,
         structName: structName,
         isFeatured: boolFlag(from: featuredRaw, default: false),
-        success: boolFlag(from: successRaw, default: true)
+        success: boolFlag(from: successRaw, default: true),
+        number: normalized.number,
+        suffix: normalized.suffix
     )
 }
 
@@ -182,12 +204,11 @@ for file in swiftFiles {
     }
 }
 
-// Sort by concept number when possible
+// Sort by concept number, then by variant suffix so Concept 012b precedes Concept 012c.
 parsedEntries.sort { lhs, rhs in
-    let leftMatch = firstMatch(in: lhs.title, pattern: "Concept\\s*0*([0-9]+)")
-    let rightMatch = firstMatch(in: rhs.title, pattern: "Concept\\s*0*([0-9]+)")
-    if let l = leftMatch.flatMap(Int.init), let r = rightMatch.flatMap(Int.init) {
-        return l < r
+    if let l = lhs.number, let r = rhs.number {
+        if l != r { return l < r }
+        return lhs.suffix < rhs.suffix
     }
     return lhs.title < rhs.title
 }

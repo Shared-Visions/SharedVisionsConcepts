@@ -114,14 +114,24 @@ struct ConceptRegistry {
         makeView: { AnyView(Concept011()) }
     ),
     Concept(
-        title: "Concept 012",
+        title: "Concept 012b",
         type: .SPACE,
         date: Date("9/23/2026"),
-        isFeatured: true,
+        isFeatured: false,
         subtitle: "Interview Chooser Dome",
         description: "Reinterprets the \"choose interview\" comp for visionOS, revised against the design team's 21 Oct workshop screenshots. A persistent documentary window carries its own title frame and sits nearer the viewer than everything else, with person orbs — a persona portrait suspended inside a small sphere of water — floating all around it on a wide dome rather than a flat grid. Each face is lifted out of its photographic background with Vision's foreground-instance mask and layered in depth inside the sphere, so it reads as a spatial persona rather than a flat snapshot. Each person carries a cluster of flat app-icon bubbles instead of colour dots. Role filtering and the Community/Applications switch moved off the video window into a floating \"Interview Universe\" panel at the same depth as the faces, selecting a person opens a detail overlay in the same visual language, and three live sliders (video size, bubble size, field of view) let the proportions be tuned in-headset. Pinching an orb sends a traveling ripple across its water surface from the point you touched.",
         success: true,
-        makeView: { AnyView(Concept012()) }
+        makeView: { AnyView(Concept012b()) }
+    ),
+    Concept(
+        title: "Concept 012c",
+        type: .SPACE,
+        date: Date("11/5/2026"),
+        isFeatured: true,
+        subtitle: "Interview Chooser Dome",
+        description: "The 012b chooser dome revised against the next round of design feedback. The dome is pulled in tight: the field of view now tops out at 180 degrees so nobody sits behind the viewer's shoulders, and the spacing between orbs is cut by a quarter so the community reads as a crowd rather than a scattering. The blue-green tint is off the water, leaving neutral spheres whose only colour is the selected person's own accent. Selecting someone no longer opens a panel off to the side with a second copy of their photo in it — the profile unfurls downward out of the bubble you tapped, anchored to that orb on the dome, and the face inside the bubble stays the only picture of that person on screen. Everything else carries over from 012b: the persistent documentary window nearer the viewer than the dome, Vision-lifted portraits layered in depth inside each sphere, app-category bubbles on the app icon's hexagon, working Community and Applications filters, and the in-headset tuning sliders.",
+        success: true,
+        makeView: { AnyView(Concept012c()) }
     ),
     Concept(
         title: "Concept 013",
