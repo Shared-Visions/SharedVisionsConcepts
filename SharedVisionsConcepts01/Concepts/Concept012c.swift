@@ -4,7 +4,7 @@
 //
 //  Subtitle: Interview Chooser Dome
 //
-//  Description: The 012b chooser dome revised against the next round of design feedback. The dome is pulled in tight: the field of view now tops out at 180 degrees so nobody sits behind the viewer's shoulders, and the spacing between orbs is cut by a quarter so the community reads as a crowd rather than a scattering. The spheres are now actually see-through — the blue-green tint is gone and the glass blends at 0.18 rather than 0.68, so the photo inside reads clearly instead of through a semi-opaque shell. Selecting someone no longer opens a panel off to the side with a second copy of their photo in it — the profile unfurls downward out of the bubble you tapped, anchored to that orb on the dome, and the face inside the bubble stays the only picture of that person on screen. Everything else carries over from 012b: the persistent documentary window nearer the viewer than the dome, Vision-lifted portraits layered in depth inside each sphere, app-category bubbles on the app icon's hexagon, working Community and Applications filters, and the in-headset tuning sliders.
+//  Description: The 012b chooser dome revised against the next round of design feedback. The dome is pulled in tight: the field of view now tops out at 180 degrees so nobody sits behind the viewer's shoulders, and the spacing between orbs is cut by a quarter so the community reads as a crowd rather than a scattering. The spheres are now actually see-through — the blue-green tint is gone and the glass blends at 0.18 rather than 0.68, so the photo inside reads clearly instead of through a semi-opaque shell. Colour signals relevance rather than focus: every face is in full colour by default and only drops to monochrome when a filter is active and that person falls outside it, where 012b left the whole dome grey until something was selected. Selecting someone no longer opens a panel off to the side with a second copy of their photo in it — the profile unfurls downward out of the bubble you tapped, anchored to that orb on the dome, and the face inside the bubble stays the only picture of that person on screen. Everything else carries over from 012b: the persistent documentary window nearer the viewer than the dome, Vision-lifted portraits layered in depth inside each sphere, app-category bubbles on the app icon's hexagon, working Community and Applications filters, and the in-headset tuning sliders.
 //
 //  Type: Space
 //
@@ -380,6 +380,13 @@ struct Concept012c: View {
         return mockPeople.first { $0.id == selectedPersonID }
     }
 
+    /// IDs of the people the current filter keeps. Everyone, when the filter
+    /// is "All" — which is what makes colour the default rather than the
+    /// reward for being selected.
+    private var filteredIDs: Set<Int> {
+        Set(filteredPeople.map(\.id))
+    }
+
     var body: some View {
         RealityView { content, attachments in
             buildDome(in: &content, attachments: attachments)
@@ -396,6 +403,7 @@ struct Concept012c: View {
                         person: person,
                         portrait: portraitStore.portrait(for: person),
                         isSelected: person.id == selectedPersonID,
+                        matchesFilter: filteredIDs.contains(person.id),
                         appsEmphasized: mode == .applications
                     )
                 }
@@ -566,7 +574,7 @@ struct Concept012c: View {
 
     @MainActor
     private func updateDome(in content: inout RealityViewContent, attachments: RealityViewAttachments) {
-        let visibleIDs = Set(filteredPeople.map(\.id))
+        let visibleIDs = filteredIDs
         let positions = domePositions()
         let orbScale = Float(tuning.bubbleScale)
 
@@ -949,6 +957,9 @@ fileprivate struct PersonaPortrait: View {
     let person: Person
     let portrait: UIImage?
     let isSelected: Bool
+    /// False only while a filter is active and this person falls outside it.
+    /// Everyone matches when the filter is "All".
+    let matchesFilter: Bool
     var diameter: Double = 70
 
     var body: some View {
@@ -993,12 +1004,20 @@ fileprivate struct PersonaPortrait: View {
                     .offset(z: diameter * 0.08)
             }
         }
-        // Colour is the signal for focus: the active face is full colour and
-        // slightly over-saturated, everyone else is monochrome. Filter state
-        // is carried separately, by `OpacityComponent` on the orb.
-        .grayscale(isSelected ? 0 : 1)
+        // Colour signals *relevance*, not focus. Everyone is in full colour
+        // by default; a face only drops to monochrome when a filter is
+        // active and that person falls outside it — pick "Developer" and the
+        // non-developers go grey. 012b keyed this off selection instead,
+        // which left the whole dome grey until you tapped someone and made
+        // the photos read as archival stills rather than people.
+        //
+        // Focus is carried by everything else the selected orb already gets:
+        // the accent rim, the brighter backlight, the 1.28x swell, and the
+        // saturation lift below.
+        .grayscale(matchesFilter ? 0 : 1)
         .saturation(isSelected ? 1.25 : 1)
         .animation(.easeInOut(duration: 0.28), value: isSelected)
+        .animation(.easeInOut(duration: 0.28), value: matchesFilter)
     }
 }
 
@@ -1015,6 +1034,7 @@ fileprivate struct PersonAttachment: View {
     let person: Person
     let portrait: UIImage?
     let isSelected: Bool
+    let matchesFilter: Bool
     let appsEmphasized: Bool
 
     /// Face diameter in points. Its world size comes from the attachment's
@@ -1051,6 +1071,7 @@ fileprivate struct PersonAttachment: View {
                 person: person,
                 portrait: portrait,
                 isSelected: isSelected,
+                matchesFilter: matchesFilter,
                 diameter: faceDiameter
             )
             .overlay(
