@@ -4,7 +4,7 @@
 //
 //  Subtitle: Interview Chooser Dome
 //
-//  Description: The 012b chooser dome revised against the next round of design feedback. The dome is pulled in tight: the field of view now tops out at 180 degrees so nobody sits behind the viewer's shoulders, and the spacing between orbs is cut by a quarter so the community reads as a crowd rather than a scattering. The blue-green tint is off the water, leaving neutral spheres whose only colour is the selected person's own accent. Selecting someone no longer opens a panel off to the side with a second copy of their photo in it — the profile unfurls downward out of the bubble you tapped, anchored to that orb on the dome, and the face inside the bubble stays the only picture of that person on screen. Everything else carries over from 012b: the persistent documentary window nearer the viewer than the dome, Vision-lifted portraits layered in depth inside each sphere, app-category bubbles on the app icon's hexagon, working Community and Applications filters, and the in-headset tuning sliders.
+//  Description: The 012b chooser dome revised against the next round of design feedback. The dome is pulled in tight: the field of view now tops out at 180 degrees so nobody sits behind the viewer's shoulders, and the spacing between orbs is cut by a quarter so the community reads as a crowd rather than a scattering. The spheres are now actually see-through — the blue-green tint is gone and the glass blends at 0.18 rather than 0.68, so the photo inside reads clearly instead of through a semi-opaque shell. Selecting someone no longer opens a panel off to the side with a second copy of their photo in it — the profile unfurls downward out of the bubble you tapped, anchored to that orb on the dome, and the face inside the bubble stays the only picture of that person on screen. Everything else carries over from 012b: the persistent documentary window nearer the viewer than the dome, Vision-lifted portraits layered in depth inside each sphere, app-category bubbles on the app icon's hexagon, working Community and Applications filters, and the in-headset tuning sliders.
 //
 //  Type: Space
 //
@@ -219,6 +219,18 @@ fileprivate struct DesignTuning {
     /// the outermost faces exactly at the shoulder line, and the slider in
     /// `TuningPanel` is capped there so the dome can only be narrowed.
     var fieldOfViewDegrees: Double = 180
+
+    /// How much of the glass sphere is blended over the face inside it.
+    ///
+    /// 012b inherited `WaterSphereMaterial`'s 0.68, which left only a third
+    /// of the photo showing through — the feedback was that the spheres read
+    /// as semi-opaque and the faces were unreadable unless you put your head
+    /// inside one. At 0.18 the photo comes through clearly and the sphere is
+    /// a glass shell around it. Exposed as a slider because RealityKit's
+    /// transparent blending dims the specular glint along with the body, so
+    /// where "clear glass" stops and "no sphere at all" starts is a judgement
+    /// call best made in the headset.
+    var glassOpacity: Double = 0.18
 
     var videoWidth: CGFloat { DesignTuning.baseVideoSize.width * CGFloat(videoScale) }
     var videoHeight: CGFloat { DesignTuning.baseVideoSize.height * CGFloat(videoScale) }
@@ -558,6 +570,8 @@ struct Concept012c: View {
         let positions = domePositions()
         let orbScale = Float(tuning.bubbleScale)
 
+        waterController.setGlassOpacity(Float(tuning.glassOpacity))
+
         for (index, person) in mockPeople.enumerated() {
             guard let orb = orbEntities[person.id] else { continue }
             let matchesFilter = visibleIDs.contains(person.id)
@@ -775,6 +789,43 @@ fileprivate final class WaterOrbController {
     /// surface to catch highlights on rather than vanishing into the room.
     private let waterTint = UIColor(white: 0.78, alpha: 1.0)
 
+    /// Uniform glow on the sphere's surface.
+    ///
+    /// Nearly off, where 012b ran it at 0.12. Emissive light is added across
+    /// the whole sphere and is *not* attenuated by the transparency, so at
+    /// 0.12 it veiled the face regardless of how clear the blending was —
+    /// half the reason the spheres read as semi-opaque milk rather than
+    /// glass. A trace is kept so the surface does not disappear entirely
+    /// against a dark room.
+    private let waterEmissiveIntensity: Float = 0.03
+
+    /// How much of the glass is blended over the face behind it. Driven by
+    /// `DesignTuning.glassOpacity` so it can be settled in-headset.
+    private var glassOpacity: Float = 0.18
+
+    /// Rebuilds every sphere's material when the glass opacity changes.
+    ///
+    /// Compared before assigning: this is called from the `RealityView`
+    /// update closure, which runs on every state change in the concept, and
+    /// rebuilding twenty materials per frame would be wasted work.
+    func setGlassOpacity(_ opacity: Float) {
+        guard abs(opacity - glassOpacity) > 0.001 else { return }
+        glassOpacity = opacity
+
+        let material = makeMaterial()
+        for state in statesByPersonID.values {
+            state.entity.model?.materials = [material]
+        }
+    }
+
+    private func makeMaterial() -> PhysicallyBasedMaterial {
+        WaterSphereMaterial.make(
+            tint: waterTint,
+            opacity: glassOpacity,
+            emissiveIntensity: waterEmissiveIntensity
+        )
+    }
+
     /// Creates the water sphere entity for a person's orb. Named "GlassSphere"
     /// (matching the original asset's part name) so existing input-target /
     /// hover-effect / tap-lookup code elsewhere in this file keeps working
@@ -784,7 +835,7 @@ fileprivate final class WaterOrbController {
         let resource = try? mesh.generate(ripples: [], elapsedTime: 0)
         let entity = ModelEntity(
             mesh: resource ?? .generateSphere(radius: sphereRadius),
-            materials: [WaterSphereMaterial.make(tint: waterTint)]
+            materials: [makeMaterial()]
         )
         entity.name = "GlassSphere"
         entity.components.set(InputTargetComponent())
@@ -1403,6 +1454,16 @@ fileprivate struct TuningPanel: View {
 
             TuningSlider(title: "Video size", value: $tuning.videoScale, range: 0.5...2.5)
             TuningSlider(title: "Bubble size", value: $tuning.bubbleScale, range: 0.5...2.0)
+            TuningSlider(
+                title: "Glass opacity",
+                value: $tuning.glassOpacity,
+                // Floor is not zero: at 0 the sphere vanishes and the faces
+                // read as photos pinned in mid-air rather than people in
+                // bubbles, which is a different concept.
+                range: 0.05...0.7,
+                unit: "",
+                fractionLength: 2
+            )
             TuningSlider(
                 title: "Field of view",
                 value: $tuning.fieldOfViewDegrees,

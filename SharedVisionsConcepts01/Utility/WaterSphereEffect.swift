@@ -122,7 +122,28 @@ struct WaterSphereMesh {
 /// transparency to hint at depth. Plain `PhysicallyBasedMaterial` rather than
 /// a shader graph, so it works without a Reality Composer Pro asset.
 enum WaterSphereMaterial {
-    static func make(tint: UIColor = UIColor(red: 0.05, green: 0.55, blue: 0.68, alpha: 1.0)) -> PhysicallyBasedMaterial {
+
+    /// Builds the material.
+    ///
+    /// - Parameters:
+    ///   - tint: Base and emissive colour of the surface.
+    ///   - opacity: How much of the surface is blended over what is behind
+    ///     it. Note that RealityKit's `.transparent` blending scales the
+    ///     *whole* shaded result, specular highlight included — so a low
+    ///     value buys a clear view through the sphere at the cost of a
+    ///     dimmer glint. Pair a low opacity with a low `emissiveIntensity`:
+    ///     emissive light is added uniformly across the sphere and is not
+    ///     attenuated by opacity, so it veils whatever is behind the surface
+    ///     no matter how transparent the blending is.
+    ///   - emissiveIntensity: Uniform glow added on top of the shading.
+    ///
+    /// The defaults reproduce the original look and are relied on by Concept
+    /// 012b, which is frozen for comparison against 012c.
+    static func make(
+        tint: UIColor = UIColor(red: 0.05, green: 0.55, blue: 0.68, alpha: 1.0),
+        opacity: Float = 0.68,
+        emissiveIntensity: Float = 0.12
+    ) -> PhysicallyBasedMaterial {
         var material = PhysicallyBasedMaterial()
         material.baseColor = .init(tint: tint)
         material.roughness = 0.04
@@ -130,8 +151,8 @@ enum WaterSphereMaterial {
         material.clearcoat = 1.0
         material.clearcoatRoughness = 0.02
         material.emissiveColor = .init(color: tint)
-        material.emissiveIntensity = 0.12
-        material.blending = .transparent(opacity: .init(floatLiteral: 0.68))
+        material.emissiveIntensity = emissiveIntensity
+        material.blending = .transparent(opacity: .init(floatLiteral: opacity))
         material.readsDepth = true
         material.writesDepth = false
         return material
